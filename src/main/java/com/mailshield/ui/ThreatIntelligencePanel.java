@@ -18,6 +18,7 @@ public class ThreatIntelligencePanel extends JPanel {
     private final ThreatIntelligenceService threatIntelService;
     private JTextField txtIocSearch;
     private JTextArea txtIocVerdict;
+    private DefaultTableModel iocTableModel;
 
     public ThreatIntelligencePanel(ThreatIntelligenceService threatIntelService) {
         this.threatIntelService = threatIntelService;
@@ -118,26 +119,20 @@ public class ThreatIntelligencePanel extends JPanel {
         qCenter.add(vScroll, BorderLayout.CENTER);
         queryCard.add(qCenter, BorderLayout.CENTER);
 
-        // Right: Curated Indicators Table
+        // Right: Active IOC Indicators & Query History
         JPanel tableCard = UiTheme.createCardPanel();
         tableCard.setLayout(new BorderLayout(0, 10));
 
-        JLabel tblTitle = new JLabel("Curated IOC Sample Telemetry (Academic Demo Feed)");
+        JLabel tblTitle = new JLabel("Indicator Lookup Telemetry & Reputation Log");
         tblTitle.setFont(UiTheme.FONT_HEADER);
         tableCard.add(tblTitle, BorderLayout.NORTH);
 
-        String[] cols = {"Indicator (IOC)", "Type", "Threat Classification", "Confidence"};
-        DefaultTableModel model = new DefaultTableModel(cols, 0) {
+        String[] cols = {"Observed Indicator", "Type", "Reputation Status", "Source"};
+        iocTableModel = new DefaultTableModel(cols, 0) {
             @Override public boolean isCellEditable(int r, int c) { return false; }
         };
 
-        model.addRow(new Object[]{"paypa1-account-security.net", "Domain", "Credential Harvesting Infrastructure", "96%"});
-        model.addRow(new Object[]{"temp-relay-mail.top", "Domain", "Bulletproof Spam Relay", "90%"});
-        model.addRow(new Object[]{"global-invoicing-portal.com", "Domain", "Malware Staging & Dropper", "94%"});
-        model.addRow(new Object[]{"198.51.100.55", "IPv4 Host", "Active Phishing Landing Portal", "98%"});
-        model.addRow(new Object[]{"Invoice_Sept2026_Final.pdf.exe", "Double Ext", "Disguised PE Executable Lure", "98%"});
-
-        JTable table = new JTable(model);
+        JTable table = new JTable(iocTableModel);
         table.setRowHeight(28);
         table.setFont(UiTheme.FONT_REGULAR);
         JScrollPane scrollTable = new JScrollPane(table);
@@ -171,10 +166,17 @@ public class ThreatIntelligencePanel extends JPanel {
         List<Finding> urlHits = threatIntelService.checkUrlReputation(query);
         List<Finding> hashHits = threatIntelService.checkHashReputation(query, query);
 
+        String type = query.contains("@") ? "Email Address" :
+                      query.matches("^[a-fA-F0-9]{64}$") ? "SHA-256 Hash" :
+                      query.matches("^\\d{1,3}(\\.\\d{1,3}){3}$") ? "IPv4 Host" : "Domain/URL";
+
         if (domainHits.isEmpty() && urlHits.isEmpty() && hashHits.isEmpty()) {
             sb.append("STATUS: CLEAN / UNKNOWN\n");
             sb.append("• No malicious activity or threat actor campaigns associated with this indicator in the active feed.\n");
             sb.append("• Note: Absence of reputation match does not guarantee absolute safety for newly registered domains.");
+            if (iocTableModel != null) {
+                iocTableModel.insertRow(0, new Object[]{query, type, "CLEAN / UNKNOWN", threatIntelService.getProviderName()});
+            }
         } else {
             sb.append("STATUS: THREAT DETECTED (MATCH IN REPUTATION FEED)\n\n");
             for (Finding f : domainHits) {
@@ -187,6 +189,9 @@ public class ThreatIntelligencePanel extends JPanel {
                 sb.append(String.format("• [%s] %s\n  %s\n\n", f.getSeverity().name(), f.getShortDescription(), f.getExplanation()));
             }
             sb.append("RECOMMENDED ACTION: Quarantine and block indicator at network perimeter.");
+            if (iocTableModel != null) {
+                iocTableModel.insertRow(0, new Object[]{query, type, "MALICIOUS / THREAT", threatIntelService.getProviderName()});
+            }
         }
 
         txtIocVerdict.setText(sb.toString());

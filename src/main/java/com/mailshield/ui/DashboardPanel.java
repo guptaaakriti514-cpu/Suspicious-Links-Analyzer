@@ -241,15 +241,31 @@ public class DashboardPanel extends JPanel {
             EmailProvider gmail = providers.get(ProviderType.GMAIL);
             if (gmail != null) {
                 ProviderConnectionStatus st = gmail.getStatus();
-                lblGmailStatus.setText(st.isConnected() ? "Connected (" + st.getAccountEmail() + ")" : st.getSyncStatus());
-                lblGmailStatus.setForeground(st.isConnected() ? UiTheme.COLOR_LOW : UiTheme.TEXT_MUTED);
+                if (st.isConnected()) {
+                    lblGmailStatus.setText("Connected (" + st.getAccountEmail() + ")");
+                    lblGmailStatus.setForeground(UiTheme.COLOR_LOW);
+                } else if (st.isConfigured()) {
+                    lblGmailStatus.setText("Configured (Ready to Connect)");
+                    lblGmailStatus.setForeground(UiTheme.ACCENT_CYAN);
+                } else {
+                    lblGmailStatus.setText("Not Configured");
+                    lblGmailStatus.setForeground(UiTheme.TEXT_MUTED);
+                }
             }
 
             EmailProvider outlook = providers.get(ProviderType.OUTLOOK);
             if (outlook != null) {
                 ProviderConnectionStatus st = outlook.getStatus();
-                lblOutlookStatus.setText(st.isConnected() ? "Connected (" + st.getAccountEmail() + ")" : st.getSyncStatus());
-                lblOutlookStatus.setForeground(st.isConnected() ? UiTheme.COLOR_LOW : UiTheme.TEXT_MUTED);
+                if (st.isConnected()) {
+                    lblOutlookStatus.setText("Connected (" + st.getAccountEmail() + ")");
+                    lblOutlookStatus.setForeground(UiTheme.COLOR_LOW);
+                } else if (st.isConfigured()) {
+                    lblOutlookStatus.setText("Configured (Ready to Connect)");
+                    lblOutlookStatus.setForeground(UiTheme.ACCENT_CYAN);
+                } else {
+                    lblOutlookStatus.setText("Not Configured");
+                    lblOutlookStatus.setForeground(UiTheme.TEXT_MUTED);
+                }
             }
         }
     }

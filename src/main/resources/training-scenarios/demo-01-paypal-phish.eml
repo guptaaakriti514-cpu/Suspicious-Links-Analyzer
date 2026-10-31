@@ -1,0 +1,24 @@
+From: "PayPal Security Support" <security-alert@paypa1-account-security.net>
+Reply-To: support-collector@temp-relay-mail.top
+To: victim.employee@target-corp.com
+Subject: [URGENT] Your PayPal Account Will Be Suspended Within 24 Hours - Action Required
+Date: Wed, 28 Oct 2026 14:15:20 +0530
+Message-ID: <20261028141520.98421.alert@paypa1-account-security.net>
+Return-Path: <bounce-daemon@temp-relay-mail.top>
+Authentication-Results: mx.target-corp.com; spf=fail (sender IP 198.51.100.22) smtp.mailfrom=bounce-daemon@temp-relay-mail.top; dkim=fail header.d=paypa1-account-security.net; dmarc=fail action=none header.from=paypa1-account-security.net
+Received: from relay02.temp-relay-mail.top (relay02.temp-relay-mail.top [198.51.100.22]) by mx.target-corp.com with ESMTP id p44321; Wed, 28 Oct 2026 14:15:22 +0530
+Content-Type: text/html; charset=UTF-8
+MIME-Version: 1.0
+
+<html><body>
+<div style='font-family: Arial, sans-serif;'>
+<h2 style='color: #c00;'>Critical Security Notice: Suspicious Login Detected</h2>
+<p>Dear Valued Customer,</p>
+<p>We have detected unauthorized sign-in attempts to your PayPal business account from an unknown device in Moscow, Russia.</p>
+<p>To protect your account funds and prevent permanent account termination, you must verify your identity and update your credentials immediately.</p>
+<p>Failure to verify your identity within <strong>24 hours</strong> will result in permanent account suspension and frozen funds.</p>
+<p><a href='http://198.51.100.55/login/verify-identity.php' style='background:#0070ba;color:#fff;padding:10px 20px;text-decoration:none;'>Log In to Verify Account</a></p>
+<p>Or visit: <a href='http://198.51.100.55/login/verify-identity.php'>https://www.paypal.com/security/verify-account</a></p>
+<br/><p>Sincerely,<br/>PayPal Account Risk &amp; Anti-Fraud Department</p>
+</div></body></html>
+

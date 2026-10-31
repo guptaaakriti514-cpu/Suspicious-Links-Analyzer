@@ -63,13 +63,16 @@ public class MailShieldMainWindow extends JFrame {
         // Initialize 10 Screens
         this.dashboardPanel = new DashboardPanel(caseRepository, providers, () -> switchScreen("ANALYZE"));
         this.analyzePanel = new AnalyzeEmailPanel(emailParser, detectionEngine, caseRepository, evidenceManager, reportGenerator);
-        this.inboxesPanel = new ConnectedInboxesPanel(providers, monitoringService);
+        this.inboxesPanel = new ConnectedInboxesPanel(providers, monitoringService, appConfig);
         this.queuePanel = new InvestigationQueuePanel(caseRepository);
         this.urlPanel = new UrlDomainAnalysisPanel(detectionEngine.getThreatIntelService());
         this.casesPanel = new CasesPanel(caseRepository);
         this.threatPanel = new ThreatIntelligencePanel(detectionEngine.getThreatIntelService());
         this.evidencePanel = new EvidenceReportsPanel(caseRepository, reportGenerator);
-        this.settingsPanel = new SettingsSecurityPanel(appConfig, credentialStore);
+        this.settingsPanel = new SettingsSecurityPanel(appConfig, credentialStore, providers, () -> {
+            inboxesPanel.refreshStatus();
+            dashboardPanel.refreshData();
+        });
         this.aboutPanel = new AboutHelpPanel();
 
         contentStage.add(dashboardPanel, "DASHBOARD");

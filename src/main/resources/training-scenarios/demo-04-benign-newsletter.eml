@@ -1,0 +1,18 @@
+From: "GitHub Security Lab" <notifications@github.com>
+Reply-To: support@github.com
+To: developer@target-corp.com
+Subject: GitHub Security Advisory: Monthly Open Source Security Roundup
+Date: Mon, 26 Oct 2026 11:00:00 +0530
+Message-ID: <gh-advisory-20261026@github.com>
+Return-Path: <bounces@github.com>
+Authentication-Results: mx.target-corp.com; spf=pass (sender IP 140.82.112.4) smtp.mailfrom=bounces@github.com; dkim=pass header.d=github.com; dmarc=pass action=none header.from=github.com
+Content-Type: text/html; charset=UTF-8
+
+<html><body>
+<div style='font-family: sans-serif;'>
+<h3>GitHub Security Lab Digest</h3>
+<p>Welcome to our monthly community roundup covering best practices for securing supply chains in modern CI/CD pipelines.</p>
+<p>Read the complete technical research on our blog: <a href='https://github.blog/security'>https://github.blog/security</a></p>
+<p>You are receiving this digest because you subscribed to GitHub Security Advisories. <a href='https://github.com/settings/notifications'>Unsubscribe</a></p>
+</div></body></html>
+

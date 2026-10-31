@@ -1,15 +1,13 @@
 package com.mailshield.ingestion;
 
-import com.mailshield.app.DemoDataFixtures;
 import com.mailshield.detection.SafeUrlAnalyzer;
 import com.mailshield.model.AuthenticationResult;
 import com.mailshield.model.EmailMessage;
-import com.mailshield.model.ProviderType;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
-import java.io.ByteArrayInputStream;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -23,10 +21,18 @@ public class SafeEmailParserTest {
         parser = new SafeEmailParser(new SafeUrlAnalyzer());
     }
 
+    private String readScenario(String resourcePath) throws Exception {
+        try (InputStream is = getClass().getResourceAsStream(resourcePath)) {
+            assertThat(is).isNotNull();
+            return new String(is.readAllBytes(), StandardCharsets.UTF_8);
+        }
+    }
+
     @Test
     @DisplayName("Should successfully parse raw RFC 5322 email text")
     void testParseRawText() throws Exception {
-        EmailMessage message = parser.parseRawText(DemoDataFixtures.RAW_PAYPAL_PHISH_EML);
+        String raw = readScenario("/training-scenarios/demo-01-paypal-phish.eml");
+        EmailMessage message = parser.parseRawText(raw);
 
         assertThat(message).isNotNull();
         assertThat(message.getSubject()).contains("Your PayPal Account Will Be Suspended");
@@ -51,14 +57,16 @@ public class SafeEmailParserTest {
     @Test
     @DisplayName("Should safely parse multipart attachment metadata without executing content")
     void testParseAttachmentMetadata() throws Exception {
-        byte[] bytes = DemoDataFixtures.RAW_MALICIOUS_ATTACHMENT_EML.getBytes(StandardCharsets.UTF_8);
-        EmailMessage message = parser.parseEmlStream(new ByteArrayInputStream(bytes), "sample.eml");
+        try (InputStream is = getClass().getResourceAsStream("/training-scenarios/demo-03-malicious-attachment.eml")) {
+            assertThat(is).isNotNull();
+            EmailMessage message = parser.parseEmlStream(is, "sample.eml");
 
-        assertThat(message).isNotNull();
-        assertThat(message.getAttachments()).hasSize(1);
-        var att = message.getAttachments().get(0);
-        assertThat(att.getFilename()).isEqualTo("Invoice_Sept2026_Final.pdf.exe");
-        assertThat(att.getSha256Hash()).isNotEmpty();
+            assertThat(message).isNotNull();
+            assertThat(message.getAttachments()).hasSize(1);
+            var att = message.getAttachments().get(0);
+            assertThat(att.getFilename()).isEqualTo("Invoice_Sept2026_Final.pdf.exe");
+            assertThat(att.getSha256Hash()).isNotEmpty();
+        }
     }
 
     @Test
@@ -73,4 +81,3 @@ public class SafeEmailParserTest {
         assertThat(message.getBodyText()).contains("Hey Bob, are you free?");
     }
 }
-

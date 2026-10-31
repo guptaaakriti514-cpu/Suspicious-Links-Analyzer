@@ -47,6 +47,7 @@ public class GoogleGmailProvider implements GmailProvider {
     private int redirectPort;
     private Gmail gmailService;
     private ProviderConnectionStatus currentStatus;
+    private String lastErrorMessage;
 
     public GoogleGmailProvider(EmailParser emailParser, CaseRepository caseRepository, AppConfig appConfig) {
         this.emailParser = emailParser;
@@ -63,8 +64,8 @@ public class GoogleGmailProvider implements GmailProvider {
             this.currentStatus = ProviderConnectionStatus.notConfigured(ProviderType.GMAIL);
         } else if (gmailService == null) {
             this.currentStatus = new ProviderConnectionStatus(
-                    ProviderType.GMAIL, false, "Awaiting User OAuth Consent",
-                    null, "Disconnected", "", SCOPES, true
+                    ProviderType.GMAIL, false, "Ready to Connect",
+                    null, "Credentials Configured (Awaiting Sign-In)", "", SCOPES, true
             );
         }
     }
@@ -80,22 +81,28 @@ public class GoogleGmailProvider implements GmailProvider {
     }
 
     @Override
+    public String getLastErrorMessage() {
+        return lastErrorMessage != null ? lastErrorMessage : currentStatus.getErrorMessage();
+    }
+
+    @Override
     public void setCredentials(String clientId, String clientSecret, int redirectPort) {
-        this.clientId = clientId;
-        this.clientSecret = clientSecret;
-        this.redirectPort = redirectPort;
+        this.clientId = clientId != null ? clientId.trim() : "";
+        this.clientSecret = clientSecret != null ? clientSecret.trim() : "";
+        this.redirectPort = redirectPort > 0 ? redirectPort : 8888;
+        this.lastErrorMessage = null;
         updateStatus();
     }
 
     @Override
     public boolean hasStoredCredentials() {
-        return clientId != null && !clientId.isBlank() && !clientId.contains("your-google");
+        return clientId != null && !clientId.isBlank() && !clientId.contains("your-google")
+                && clientSecret != null && !clientSecret.isBlank();
     }
 
     @Override
     public boolean testConnection() {
-        if (!hasStoredCredentials()) return false;
-        if (gmailService == null) return false;
+        if (!hasStoredCredentials() || gmailService == null) return false;
         try {
             gmailService.users().getProfile("me").execute();
             return true;
@@ -107,7 +114,9 @@ public class GoogleGmailProvider implements GmailProvider {
 
     @Override
     public boolean authenticate() {
+        this.lastErrorMessage = null;
         if (!hasStoredCredentials()) {
+            this.lastErrorMessage = "Client ID or Client Secret is missing. Please configure credentials in the GUI first.";
             this.currentStatus = ProviderConnectionStatus.notConfigured(ProviderType.GMAIL);
             return false;
         }
@@ -131,8 +140,20 @@ public class GoogleGmailProvider implements GmailProvider {
                     .setAccessType("offline")
                     .build();
 
-            LocalServerReceiver receiver = new LocalServerReceiver.Builder().setPort(redirectPort).build();
-            Credential credential = new AuthorizationCodeInstalledApp(flow, receiver).authorize("user");
+            Credential credential;
+            int preferredPort = (redirectPort > 0 && isPortAvailable(redirectPort)) ? redirectPort : -1;
+            try {
+                LocalServerReceiver receiver = new LocalServerReceiver.Builder().setPort(preferredPort).build();
+                credential = new AuthorizationCodeInstalledApp(flow, receiver).authorize("user");
+            } catch (Exception e) {
+                if (preferredPort != -1 && (e instanceof java.net.BindException || (e.getMessage() != null && e.getMessage().contains("already in use")))) {
+                    log.warn("Port {} in use or in TIME_WAIT state, retrying with dynamic open port (-1)...", preferredPort);
+                    LocalServerReceiver dynamicReceiver = new LocalServerReceiver.Builder().setPort(-1).build();
+                    credential = new AuthorizationCodeInstalledApp(flow, dynamicReceiver).authorize("user");
+                } else {
+                    throw e;
+                }
+            }
 
             this.gmailService = new Gmail.Builder(httpTransport, jsonFactory, credential)
                     .setApplicationName(APPLICATION_NAME)
@@ -149,10 +170,11 @@ public class GoogleGmailProvider implements GmailProvider {
             return true;
 
         } catch (Exception e) {
+            this.lastErrorMessage = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
             log.error("Gmail OAuth authorization failed: {}", e.getMessage(), e);
             this.currentStatus = new ProviderConnectionStatus(
                     ProviderType.GMAIL, false, "Authorization Failed", null,
-                    "OAuth Error: " + e.getMessage(), e.getMessage(), SCOPES, true
+                    "OAuth Error: " + this.lastErrorMessage, this.lastErrorMessage, SCOPES, true
             );
             return false;
         }
@@ -161,6 +183,7 @@ public class GoogleGmailProvider implements GmailProvider {
     @Override
     public void disconnect() {
         this.gmailService = null;
+        this.lastErrorMessage = null;
         File tokensDirectory = new File(appConfig.getDataDir(), "tokens/gmail");
         if (tokensDirectory.exists()) {
             File[] files = tokensDirectory.listFiles();
@@ -168,14 +191,14 @@ public class GoogleGmailProvider implements GmailProvider {
                 for (File f : files) f.delete();
             }
         }
-        this.currentStatus = ProviderConnectionStatus.disconnected(ProviderType.GMAIL, "Not Signed In");
+        updateStatus();
         log.info("Gmail account disconnected and local OAuth tokens purged.");
     }
 
     @Override
     public List<EmailMessage> fetchRecentMessages(int maxMessages) throws ProviderException {
         if (gmailService == null) {
-            throw new ProviderException("Gmail provider is not authenticated. Please connect your Google account in settings.");
+            throw new ProviderException("Gmail provider is not authenticated. Please connect your Google account first.");
         }
 
         List<EmailMessage> resultList = new ArrayList<>();
@@ -198,62 +221,43 @@ public class GoogleGmailProvider implements GmailProvider {
                     continue;
                 }
 
-                // Retrieve raw message bytes
-                Message fullMsg = gmailService.users().messages().get("me", messageId)
+                // Fetch raw MIME message
+                Message rawMsg = gmailService.users().messages().get("me", messageId)
                         .setFormat("raw")
                         .execute();
 
-                byte[] rawBytes = Base64.getUrlDecoder().decode(fullMsg.getRaw());
-                EmailMessage parsed = emailParser.parseEmlStream(
-                        new java.io.ByteArrayInputStream(rawBytes),
-                        "Gmail Message ID: " + messageId
-                );
-
-                // Set provider ID to guarantee deduplication
-                EmailMessage normalized = EmailMessage.builder()
-                        .id(parsed.getId())
-                        .providerMessageId(messageId)
-                        .providerSource(ProviderType.GMAIL)
-                        .from(parsed.getFrom())
-                        .fromDisplayName(parsed.getFromDisplayName())
-                        .fromAddress(parsed.getFromAddress())
-                        .replyTo(parsed.getReplyTo())
-                        .returnPath(parsed.getReturnPath())
-                        .to(parsed.getTo())
-                        .cc(parsed.getCc())
-                        .bcc(parsed.getBcc())
-                        .subject(parsed.getSubject())
-                        .date(parsed.getDate())
-                        .messageIdHeader(parsed.getMessageIdHeader())
-                        .headers(parsed.getHeaders())
-                        .bodyText(parsed.getBodyText())
-                        .bodyHtml(parsed.getBodyHtml())
-                        .attachments(parsed.getAttachments())
-                        .extractedUrls(parsed.getExtractedUrls())
-                        .authResult(parsed.getAuthResult())
-                        .rawBytes(rawBytes)
-                        .rawSha256(parsed.getRawSha256())
-                        .ingestedAt(Instant.now())
-                        .build();
-
-                resultList.add(normalized);
-                if (caseRepository != null) {
-                    caseRepository.saveEmailMessage(normalized);
+                if (rawMsg.getRaw() != null) {
+                    byte[] rawBytes = Base64.getUrlDecoder().decode(rawMsg.getRaw());
+                    EmailMessage parsed = emailParser.parseEmlStream(
+                            new java.io.ByteArrayInputStream(rawBytes), "gmail-" + messageId + ".eml"
+                    );
+                    resultList.add(parsed);
                 }
             }
 
-            this.currentStatus = new ProviderConnectionStatus(
-                    ProviderType.GMAIL, true, currentStatus.getAccountEmail(),
-                    Instant.now(), "Sync Completed (" + resultList.size() + " new messages)",
-                    "", SCOPES, true
-            );
+            // Update last sync time
+            if (this.currentStatus.isConnected()) {
+                this.currentStatus = new ProviderConnectionStatus(
+                        ProviderType.GMAIL, true, this.currentStatus.getAccountEmail(),
+                        Instant.now(), "Synchronized (" + resultList.size() + " new msgs)", "", SCOPES, true
+                );
+            }
+
+            return resultList;
 
         } catch (Exception e) {
-            log.error("Failed to fetch messages from Gmail: {}", e.getMessage(), e);
-            throw new ProviderException("Failed to fetch Gmail messages: " + e.getMessage(), e);
+            log.error("Failed to fetch Gmail messages: {}", e.getMessage(), e);
+            throw new ProviderException("Gmail API Fetch Error: " + e.getMessage(), e);
         }
+    }
 
-        return resultList;
+    private boolean isPortAvailable(int port) {
+        if (port <= 0) return false;
+        try (java.net.ServerSocket ss = new java.net.ServerSocket(port)) {
+            ss.setReuseAddress(true);
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
     }
 }
-

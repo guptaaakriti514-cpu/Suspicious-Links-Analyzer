@@ -44,6 +44,7 @@ public class MicrosoftOutlookProvider implements OutlookProvider {
     private String tenantId;
     private IAuthenticationResult authResult;
     private ProviderConnectionStatus currentStatus;
+    private String lastErrorMessage;
 
     public MicrosoftOutlookProvider(EmailParser emailParser, CaseRepository caseRepository, AppConfig appConfig) {
         this.emailParser = emailParser;
@@ -72,8 +73,8 @@ public class MicrosoftOutlookProvider implements OutlookProvider {
             this.currentStatus = ProviderConnectionStatus.notConfigured(ProviderType.OUTLOOK);
         } else if (authResult == null) {
             this.currentStatus = new ProviderConnectionStatus(
-                    ProviderType.OUTLOOK, false, "Awaiting Microsoft Entra Sign-In",
-                    null, "Disconnected", "", new ArrayList<>(SCOPES), true
+                    ProviderType.OUTLOOK, false, "Ready to Connect",
+                    null, "Credentials Configured (Awaiting Sign-In)", "", new ArrayList<>(SCOPES), true
             );
         }
     }
@@ -86,6 +87,11 @@ public class MicrosoftOutlookProvider implements OutlookProvider {
     @Override
     public ProviderConnectionStatus getStatus() {
         return currentStatus;
+    }
+
+    @Override
+    public String getLastErrorMessage() {
+        return lastErrorMessage != null ? lastErrorMessage : currentStatus.getErrorMessage();
     }
 
     @Override
@@ -155,10 +161,11 @@ public class MicrosoftOutlookProvider implements OutlookProvider {
             return true;
 
         } catch (Exception e) {
+            this.lastErrorMessage = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
             log.error("Microsoft Entra authentication failed: {}", e.getMessage(), e);
             this.currentStatus = new ProviderConnectionStatus(
                     ProviderType.OUTLOOK, false, "Authorization Failed", null,
-                    "MSAL Error: " + e.getMessage(), e.getMessage(), new ArrayList<>(SCOPES), true
+                    "MSAL Error: " + this.lastErrorMessage, this.lastErrorMessage, new ArrayList<>(SCOPES), true
             );
             return false;
         }

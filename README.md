@@ -9,6 +9,8 @@
 
 **MailShield** is a complete, production-grade cybersecurity desktop platform inspired by enterprise Security Operations Center (SOC) workflows and digital forensics requirements. Engineered as an MCA Cybersecurity academic project, it bridges the gap between raw RFC 5322 email transmission protocols and explainable indicator triage.
 
+> 📘 **Looking for the complete manual?** Check out the comprehensive [Step-by-Step Operator Manual](docs/STEP_BY_STEP_MANUAL.md) for full setup, inbox sync, and examiner viva preparation.
+
 ---
 
 ## Key Highlights & Architectural Strengths

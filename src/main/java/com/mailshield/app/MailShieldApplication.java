@@ -83,8 +83,8 @@ public class MailShieldApplication {
             );
             monitoringService.setPollIntervalSeconds(appConfig.getPollIntervalSeconds());
 
-            // 5. Seed initial demo scenarios into database if empty for immediate demonstration
-            seedDemoDataIfEmpty(emailParser, detectionEngine, caseRepository, evidenceManager);
+            // 5. Zero-mock clean startup: Database starts empty and reflects only real user analyses
+            log.info("Initialized MailShield repository and detection engines with clean empty state.");
 
             // 6. Launch Desktop UI on Swing Event Dispatch Thread (if not headless)
             if (!GraphicsEnvironment.isHeadless()) {
@@ -119,57 +119,6 @@ public class MailShieldApplication {
             System.err.println("Fatal startup error: " + e.getMessage());
             e.printStackTrace();
         }
-    }
-
-    /**
-     * Seeds initial synthetic demo emails and incident cases into SQLite on first run
-     * so examiners and users immediately experience a populated, realistic SOC operations center.
-     */
-    public static void seedDemoDataIfEmpty(EmailParser emailParser,
-                                          DetectionEngine detectionEngine,
-                                          CaseRepository caseRepository,
-                                          EvidenceManager evidenceManager) {
-        if (caseRepository.getTotalEmailCount() > 0) {
-            return; // Already populated
-        }
-
-        log.info("Empty database detected. Seeding initial synthetic demo fixtures for viva demonstration...");
-
-        var fixtures = DemoDataFixtures.getAvailableFixtures();
-        for (int i = 0; i < fixtures.size(); i++) {
-            var item = fixtures.get(i);
-            try {
-                EmailMessage message = emailParser.parseRawText(item.getRawContent());
-                AnalysisResult result = detectionEngine.analyzeEmail(message);
-
-                caseRepository.saveEmailMessage(message);
-                caseRepository.saveAnalysisResult(result);
-                evidenceManager.recordEvidence(message, null, "Synthetic Demo Seed: " + item.getTitle());
-
-                // If high or critical, create an initial incident case
-                if (result.getRiskAssessment().getRiskLevel() == RiskLevel.CRITICAL ||
-                    result.getRiskAssessment().getRiskLevel() == RiskLevel.HIGH) {
-
-                    InvestigationCase c = InvestigationCase.builder()
-                            .caseId("CASE-2026-" + String.format("%04d", (i + 101)))
-                            .title(item.getTitle())
-                            .status(i == 0 ? CaseStatus.UNDER_INVESTIGATION : CaseStatus.OPEN)
-                            .priority(result.getRiskAssessment().getRiskLevel() == RiskLevel.CRITICAL ? CasePriority.CRITICAL : CasePriority.HIGH)
-                            .createdAt(Instant.now().minusSeconds((i + 1) * 3600L))
-                            .assignedAnalyst("SOC Tier-2 Analyst")
-                            .analystNotes("Flagged by automated heuristics. " + result.getRiskAssessment().getExplanation())
-                            .associatedMessageIds(List.of(message.getId()))
-                            .analysisResultIds(List.of(result.getAnalysisId()))
-                            .tags(List.of("SyntheticFixture", result.getRiskAssessment().getRiskLevel().name(), "AcademicDemo"))
-                            .build();
-
-                    caseRepository.saveCase(c);
-                }
-            } catch (Exception e) {
-                log.warn("Failed to seed demo fixture: {}", e.getMessage());
-            }
-        }
-        log.info("Seeding complete. Initialized {} demo threat scenarios.", fixtures.size());
     }
 }
 

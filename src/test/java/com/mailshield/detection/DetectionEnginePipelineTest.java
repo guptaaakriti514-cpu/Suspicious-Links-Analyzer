@@ -1,6 +1,5 @@
 package com.mailshield.detection;
 
-import com.mailshield.app.DemoDataFixtures;
 import com.mailshield.ingestion.EmailParser;
 import com.mailshield.ingestion.SafeEmailParser;
 import com.mailshield.intelligence.LocalThreatIntelligenceService;
@@ -11,6 +10,9 @@ import com.mailshield.scoring.DefaultRiskScoringEngine;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -33,10 +35,18 @@ public class DetectionEnginePipelineTest {
         );
     }
 
+    private String readScenario(String resourcePath) throws Exception {
+        try (InputStream is = getClass().getResourceAsStream(resourcePath)) {
+            assertThat(is).isNotNull();
+            return new String(is.readAllBytes(), StandardCharsets.UTF_8);
+        }
+    }
+
     @Test
-    @DisplayName("Fixture 1: Critical Credential Harvesting Phish must score CRITICAL")
-    void testFixture1PayPalPhish() throws Exception {
-        EmailMessage message = emailParser.parseRawText(DemoDataFixtures.RAW_PAYPAL_PHISH_EML);
+    @DisplayName("Scenario 1: Critical Credential Harvesting Phish must score CRITICAL")
+    void testScenario1PayPalPhish() throws Exception {
+        String rawEml = readScenario("/training-scenarios/demo-01-paypal-phish.eml");
+        EmailMessage message = emailParser.parseRawText(rawEml);
         AnalysisResult result = detectionEngine.analyzeEmail(message);
 
         assertThat(result.getRiskAssessment().getRiskLevel()).isEqualTo(RiskLevel.CRITICAL);
@@ -46,9 +56,10 @@ public class DetectionEnginePipelineTest {
     }
 
     @Test
-    @DisplayName("Fixture 2: CEO Fraud / BEC Wire Request must score HIGH")
-    void testFixture2CeoFraud() throws Exception {
-        EmailMessage message = emailParser.parseRawText(DemoDataFixtures.RAW_CEO_FRAUD_BEC_EML);
+    @DisplayName("Scenario 2: CEO Fraud / BEC Wire Request must score HIGH")
+    void testScenario2CeoFraud() throws Exception {
+        String rawEml = readScenario("/training-scenarios/demo-02-ceo-fraud-bec.eml");
+        EmailMessage message = emailParser.parseRawText(rawEml);
         AnalysisResult result = detectionEngine.analyzeEmail(message);
 
         assertThat(result.getRiskAssessment().getRiskLevel()).isIn(RiskLevel.HIGH, RiskLevel.CRITICAL);
@@ -57,9 +68,10 @@ public class DetectionEnginePipelineTest {
     }
 
     @Test
-    @DisplayName("Fixture 3: Disguised Double Extension Attachment must score CRITICAL")
-    void testFixture3MaliciousAttachment() throws Exception {
-        EmailMessage message = emailParser.parseRawText(DemoDataFixtures.RAW_MALICIOUS_ATTACHMENT_EML);
+    @DisplayName("Scenario 3: Disguised Double Extension Attachment must score CRITICAL")
+    void testScenario3MaliciousAttachment() throws Exception {
+        String rawEml = readScenario("/training-scenarios/demo-03-malicious-attachment.eml");
+        EmailMessage message = emailParser.parseRawText(rawEml);
         AnalysisResult result = detectionEngine.analyzeEmail(message);
 
         assertThat(result.getRiskAssessment().getRiskLevel()).isEqualTo(RiskLevel.CRITICAL);
@@ -68,13 +80,13 @@ public class DetectionEnginePipelineTest {
     }
 
     @Test
-    @DisplayName("Fixture 4: Benign Legitimate Email must score LOW")
-    void testFixture4BenignNewsletter() throws Exception {
-        EmailMessage message = emailParser.parseRawText(DemoDataFixtures.RAW_BENIGN_NEWSLETTER_EML);
+    @DisplayName("Scenario 4: Benign Legitimate Email must score LOW")
+    void testScenario4BenignNewsletter() throws Exception {
+        String rawEml = readScenario("/training-scenarios/demo-04-benign-newsletter.eml");
+        EmailMessage message = emailParser.parseRawText(rawEml);
         AnalysisResult result = detectionEngine.analyzeEmail(message);
 
         assertThat(result.getRiskAssessment().getRiskLevel()).isEqualTo(RiskLevel.LOW);
         assertThat(result.getRiskAssessment().getScore()).isLessThan(25);
     }
 }
-

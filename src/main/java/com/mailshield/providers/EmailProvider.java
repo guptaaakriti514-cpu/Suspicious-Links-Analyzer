@@ -15,6 +15,10 @@ public interface EmailProvider {
 
     ProviderConnectionStatus getStatus();
 
+    default String getLastErrorMessage() {
+        return getStatus() != null ? getStatus().getErrorMessage() : "";
+    }
+
     /**
      * Test authentication and API connectivity.
      */
@@ -40,4 +44,3 @@ public interface EmailProvider {
      */
     List<EmailMessage> fetchRecentMessages(int maxMessages) throws ProviderException;
 }
-
