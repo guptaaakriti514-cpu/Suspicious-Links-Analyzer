@@ -1,15 +1,20 @@
 package com.mailshield.ui;
 
 import com.mailshield.model.*;
+import com.mailshield.monitoring.MonitoringService;
 import com.mailshield.providers.EmailProvider;
+import com.mailshield.reporting.ReportGenerator;
 import com.mailshield.storage.CaseRepository;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import javax.swing.table.DefaultTableModel;
 import java.awt.*;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -26,6 +31,8 @@ public class DashboardPanel extends JPanel {
     private final CaseRepository caseRepository;
     private final Map<ProviderType, EmailProvider> providers;
     private final Runnable navigateToAnalyzeAction;
+    private final MonitoringService monitoringService;
+    private final ReportGenerator reportGenerator;
 
     private JLabel lblTotalEmails;
     private JLabel lblHighRisk;
@@ -34,10 +41,20 @@ public class DashboardPanel extends JPanel {
     private JLabel lblGmailStatus;
     private JLabel lblOutlookStatus;
     private DefaultTableModel recentTableModel;
+    private JTable recentTable;
 
-    public DashboardPanel(CaseRepository caseRepository, Map<ProviderType, EmailProvider> providers, Runnable navigateToAnalyze) {
+    private final List<AnalysisResult> currentRecentAnalyses = new ArrayList<>();
+    private final List<EmailMessage> currentRecentEmails = new ArrayList<>();
+
+    public DashboardPanel(CaseRepository caseRepository,
+                          Map<ProviderType, EmailProvider> providers,
+                          MonitoringService monitoringService,
+                          ReportGenerator reportGenerator,
+                          Runnable navigateToAnalyze) {
         this.caseRepository = caseRepository;
         this.providers = providers;
+        this.monitoringService = monitoringService;
+        this.reportGenerator = reportGenerator;
         this.navigateToAnalyzeAction = navigateToAnalyze;
 
         setLayout(new BorderLayout(16, 16));
@@ -47,6 +64,17 @@ public class DashboardPanel extends JPanel {
         initHeader();
         initContent();
         refreshData();
+    }
+
+    public DashboardPanel(CaseRepository caseRepository,
+                          Map<ProviderType, EmailProvider> providers,
+                          MonitoringService monitoringService,
+                          Runnable navigateToAnalyze) {
+        this(caseRepository, providers, monitoringService, null, navigateToAnalyze);
+    }
+
+    public DashboardPanel(CaseRepository caseRepository, Map<ProviderType, EmailProvider> providers, Runnable navigateToAnalyze) {
+        this(caseRepository, providers, null, null, navigateToAnalyze);
     }
 
     private void initHeader() {
@@ -74,9 +102,10 @@ public class DashboardPanel extends JPanel {
             if (navigateToAnalyzeAction != null) navigateToAnalyzeAction.run();
         });
 
-        JButton btnRefresh = UiTheme.createStyledButton("↻ Refresh Telemetry", UiTheme.CARD_BG);
-        btnRefresh.setBorder(BorderFactory.createLineBorder(UiTheme.BORDER_COLOR, 1));
-        btnRefresh.addActionListener(e -> refreshData());
+        JButton btnRefresh = UiTheme.createStyledButton("↻ Refresh All Emails", UiTheme.CARD_BG);
+        btnRefresh.setBorder(BorderFactory.createLineBorder(UiTheme.ACCENT_CYAN, 1));
+        btnRefresh.setToolTipText("Fetch incoming emails from all connected inboxes & refresh telemetry");
+        btnRefresh.addActionListener(e -> performFullRefresh(btnRefresh));
 
         btnPanel.add(btnRefresh);
         btnPanel.add(btnAnalyzeNow);
@@ -114,9 +143,16 @@ public class DashboardPanel extends JPanel {
         JPanel tableCard = UiTheme.createCardPanel();
         tableCard.setLayout(new BorderLayout(0, 10));
 
+        JPanel tblHeader = new JPanel(new BorderLayout());
+        tblHeader.setOpaque(false);
         JLabel tblTitle = new JLabel("Recent Email Ingestions & Analysis Verdicts");
         tblTitle.setFont(UiTheme.FONT_HEADER);
-        tableCard.add(tblTitle, BorderLayout.NORTH);
+        JLabel tblHint = new JLabel("Double-click any email row to view its full content & forensic details  ");
+        tblHint.setFont(UiTheme.FONT_SMALL);
+        tblHint.setForeground(UiTheme.ACCENT_CYAN);
+        tblHeader.add(tblTitle, BorderLayout.WEST);
+        tblHeader.add(tblHint, BorderLayout.EAST);
+        tableCard.add(tblHeader, BorderLayout.NORTH);
 
         String[] cols = {"Timestamp", "Sender Address", "Subject", "Risk Level", "Score", "Verdict Rationale"};
         recentTableModel = new DefaultTableModel(cols, 0) {
@@ -124,17 +160,27 @@ public class DashboardPanel extends JPanel {
             public boolean isCellEditable(int r, int c) { return false; }
         };
 
-        JTable table = new JTable(recentTableModel);
-        table.setRowHeight(28);
-        table.setFont(UiTheme.FONT_REGULAR);
-        table.getColumnModel().getColumn(0).setPreferredWidth(120);
-        table.getColumnModel().getColumn(1).setPreferredWidth(160);
-        table.getColumnModel().getColumn(2).setPreferredWidth(200);
-        table.getColumnModel().getColumn(3).setPreferredWidth(90);
-        table.getColumnModel().getColumn(4).setPreferredWidth(50);
-        table.getColumnModel().getColumn(5).setPreferredWidth(260);
+        recentTable = new JTable(recentTableModel);
+        recentTable.setRowHeight(28);
+        recentTable.setFont(UiTheme.FONT_REGULAR);
+        recentTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        recentTable.getColumnModel().getColumn(0).setPreferredWidth(120);
+        recentTable.getColumnModel().getColumn(1).setPreferredWidth(160);
+        recentTable.getColumnModel().getColumn(2).setPreferredWidth(200);
+        recentTable.getColumnModel().getColumn(3).setPreferredWidth(90);
+        recentTable.getColumnModel().getColumn(4).setPreferredWidth(50);
+        recentTable.getColumnModel().getColumn(5).setPreferredWidth(260);
 
-        JScrollPane scrollPane = new JScrollPane(table);
+        recentTable.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mouseClicked(MouseEvent e) {
+                if (e.getClickCount() >= 2 && recentTable.getSelectedRow() != -1) {
+                    openRecentEmailDetails(recentTable.getSelectedRow());
+                }
+            }
+        });
+
+        JScrollPane scrollPane = new JScrollPane(recentTable);
         scrollPane.getViewport().setBackground(UiTheme.BG_DARK);
         scrollPane.setBorder(BorderFactory.createLineBorder(UiTheme.BORDER_COLOR, 1));
         tableCard.add(scrollPane, BorderLayout.CENTER);
@@ -210,6 +256,82 @@ public class DashboardPanel extends JPanel {
         return box;
     }
 
+    public void performFullRefresh(JButton sourceButton) {
+        if (sourceButton != null) {
+            sourceButton.setEnabled(false);
+            sourceButton.setText("↻ Refreshing...");
+        }
+
+        SwingWorker<Integer, Void> worker = new SwingWorker<>() {
+            @Override
+            protected Integer doInBackground() {
+                int newSynced = 0;
+                if (monitoringService != null && monitoringService.hasAnyConnectedProvider()) {
+                    newSynced = monitoringService.triggerSyncAllConnected(25);
+                }
+                return newSynced;
+            }
+
+            @Override
+            protected void done() {
+                try {
+                    int newCount = get();
+                    refreshData();
+
+                    int total = caseRepository != null ? caseRepository.getTotalEmailCount() : 0;
+                    if (newCount > 0) {
+                        JOptionPane.showMessageDialog(DashboardPanel.this,
+                                "✓ Telemetry & Inboxes Refreshed!\n\n" +
+                                "Ingested and analyzed: " + newCount + " new email(s).\n" +
+                                "Total emails in system: " + total + ".\n\n" +
+                                "Overview statistics and threat alerts are fully updated.",
+                                "Refresh Complete", JOptionPane.INFORMATION_MESSAGE);
+                    } else if (monitoringService != null && monitoringService.hasAnyConnectedProvider()) {
+                        JOptionPane.showMessageDialog(DashboardPanel.this,
+                                "✓ Telemetry Refreshed\n\n" +
+                                "All connected inboxes are synchronized (no new incoming messages).\n" +
+                                "Total emails in system: " + total + ".",
+                                "Refresh Complete", JOptionPane.INFORMATION_MESSAGE);
+                    } else {
+                        JOptionPane.showMessageDialog(DashboardPanel.this,
+                                "✓ Telemetry Refreshed\n\n" +
+                                "Loaded current metrics from local database (" + total + " emails).\n\n" +
+                                "ℹ To synchronize live emails from Gmail or Outlook,\n" +
+                                "please visit 'Connected Inboxes' to authorize your account.",
+                                "Telemetry Refreshed", JOptionPane.INFORMATION_MESSAGE);
+                    }
+                } catch (Exception ex) {
+                    refreshData();
+                    JOptionPane.showMessageDialog(DashboardPanel.this,
+                            "Error refreshing inboxes: " + ex.getMessage(),
+                            "Refresh Warning", JOptionPane.WARNING_MESSAGE);
+                } finally {
+                    if (sourceButton != null) {
+                        sourceButton.setEnabled(true);
+                        sourceButton.setText("↻ Refresh All Emails");
+                    }
+                }
+            }
+        };
+        worker.execute();
+    }
+
+    private void openRecentEmailDetails(int row) {
+        if (row < 0 || row >= currentRecentEmails.size()) return;
+        EmailMessage email = currentRecentEmails.get(row);
+        AnalysisResult analysis = row < currentRecentAnalyses.size() ? currentRecentAnalyses.get(row) : null;
+        if (email != null) {
+            EmailDetailsDialog dialog = new EmailDetailsDialog(
+                    SwingUtilities.getWindowAncestor(this),
+                    email,
+                    analysis,
+                    caseRepository,
+                    reportGenerator
+            );
+            dialog.setVisible(true);
+        }
+    }
+
     public void refreshData() {
         if (caseRepository != null) {
             lblTotalEmails.setText(String.valueOf(caseRepository.getTotalEmailCount()));
@@ -219,20 +341,25 @@ public class DashboardPanel extends JPanel {
 
             // Update recent table
             recentTableModel.setRowCount(0);
+            currentRecentAnalyses.clear();
+            currentRecentEmails.clear();
+
             List<AnalysisResult> recent = caseRepository.findRecentAnalyses(15);
             for (AnalysisResult r : recent) {
                 var emailOpt = caseRepository.findEmailMessageById(r.getEmailMessageId());
-                String from = emailOpt.map(EmailMessage::getFromAddress).orElse("N/A");
-                String subject = emailOpt.map(EmailMessage::getSubject).orElse("(No Subject)");
-
-                recentTableModel.addRow(new Object[]{
-                        TIME_FMT.format(r.getAnalyzedAt()),
-                        from,
-                        subject,
-                        r.getRiskAssessment().getRiskLevel().getLabel(),
-                        r.getRiskAssessment().getScore() + "/100",
-                        r.getRiskAssessment().getExplanation()
-                });
+                if (emailOpt.isPresent()) {
+                    EmailMessage em = emailOpt.get();
+                    currentRecentAnalyses.add(r);
+                    currentRecentEmails.add(em);
+                    recentTableModel.addRow(new Object[]{
+                            TIME_FMT.format(r.getAnalyzedAt()),
+                            em.getFromAddress(),
+                            em.getSubject(),
+                            r.getRiskAssessment().getRiskLevel().getLabel(),
+                            r.getRiskAssessment().getScore() + "/100",
+                            r.getRiskAssessment().getExplanation()
+                    });
+                }
             }
         }
 

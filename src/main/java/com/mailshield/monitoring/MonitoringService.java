@@ -37,6 +37,21 @@ public interface MonitoringService {
     int triggerOnDemandSync(int maxMessages);
 
     /**
+     * Trigger an immediate synchronization pass across all connected providers.
+     *
+     * @param maxMessagesPerProvider limit of messages to fetch per provider
+     * @return total count of newly analyzed messages across all connected providers
+     */
+    int triggerSyncAllConnected(int maxMessagesPerProvider);
+
+    /**
+     * Check if at least one provider is currently authorized and connected.
+     *
+     * @return true if any provider is active and connected
+     */
+    boolean hasAnyConnectedProvider();
+
+    /**
      * Retrieve the current truthful monitoring status.
      */
     MonitoringStatus getStatus();

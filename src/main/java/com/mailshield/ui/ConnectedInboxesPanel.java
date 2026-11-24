@@ -61,8 +61,11 @@ public class ConnectedInboxesPanel extends JPanel {
     }
 
     private void initHeader() {
-        JPanel header = new JPanel(new GridLayout(2, 1, 0, 4));
+        JPanel header = new JPanel(new BorderLayout(16, 0));
         header.setOpaque(false);
+
+        JPanel text = new JPanel(new GridLayout(2, 1, 0, 4));
+        text.setOpaque(false);
 
         JLabel title = new JLabel("Authorized Mailbox Integrations");
         title.setFont(UiTheme.FONT_TITLE);
@@ -71,9 +74,68 @@ public class ConnectedInboxesPanel extends JPanel {
         subtitle.setFont(UiTheme.FONT_SMALL);
         subtitle.setForeground(UiTheme.TEXT_MUTED);
 
-        header.add(title);
-        header.add(subtitle);
+        text.add(title);
+        text.add(subtitle);
+
+        JPanel btnPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
+        btnPanel.setOpaque(false);
+
+        JButton btnSyncAll = UiTheme.createStyledButton("↻ Refresh & Sync Inboxes", UiTheme.ACCENT_BLUE);
+        btnSyncAll.setToolTipText("Fetch incoming messages from all authorized accounts");
+        btnSyncAll.addActionListener(e -> syncAllInboxes(btnSyncAll));
+
+        btnPanel.add(btnSyncAll);
+
+        header.add(text, BorderLayout.WEST);
+        header.add(btnPanel, BorderLayout.EAST);
         add(header, BorderLayout.NORTH);
+    }
+
+    private void syncAllInboxes(JButton btn) {
+        if (monitoringService == null || !monitoringService.hasAnyConnectedProvider()) {
+            JOptionPane.showMessageDialog(this,
+                    "No mailboxes are currently connected.\n\n" +
+                    "Please click 'Connect Gmail' or 'Connect Outlook' below to authorize an inbox.",
+                    "No Connected Inboxes", JOptionPane.INFORMATION_MESSAGE);
+            refreshStatus();
+            return;
+        }
+
+        if (btn != null) {
+            btn.setEnabled(false);
+            btn.setText("↻ Syncing Inboxes...");
+        }
+
+        SwingWorker<Integer, Void> worker = new SwingWorker<>() {
+            @Override
+            protected Integer doInBackground() {
+                return monitoringService.triggerSyncAllConnected(25);
+            }
+
+            @Override
+            protected void done() {
+                try {
+                    int count = get();
+                    refreshStatus();
+                    JOptionPane.showMessageDialog(ConnectedInboxesPanel.this,
+                            "✓ Synchronization pass completed!\n\n" +
+                            "Ingested and analyzed: " + count + " new email message(s).\n\n" +
+                            "Inspect results in 'Overview Dashboard' or 'Investigation Queue'.",
+                            "Inboxes Refreshed", JOptionPane.INFORMATION_MESSAGE);
+                } catch (Exception ex) {
+                    refreshStatus();
+                    JOptionPane.showMessageDialog(ConnectedInboxesPanel.this,
+                            "Synchronization error: " + ex.getMessage(),
+                            "Sync Failed", JOptionPane.ERROR_MESSAGE);
+                } finally {
+                    if (btn != null) {
+                        btn.setEnabled(true);
+                        btn.setText("↻ Refresh & Sync Inboxes");
+                    }
+                }
+            }
+        };
+        worker.execute();
     }
 
     private void initCards() {

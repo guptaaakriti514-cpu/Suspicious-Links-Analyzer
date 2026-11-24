@@ -1,6 +1,7 @@
 package com.mailshield.providers;
 
 import com.google.api.client.auth.oauth2.Credential;
+import com.google.api.client.auth.oauth2.TokenResponseException;
 import com.google.api.client.extensions.java6.auth.oauth2.AuthorizationCodeInstalledApp;
 import com.google.api.client.extensions.jetty.auth.oauth2.LocalServerReceiver;
 import com.google.api.client.googleapis.auth.oauth2.GoogleAuthorizationCodeFlow;
@@ -121,6 +122,9 @@ public class GoogleGmailProvider implements GmailProvider {
             return false;
         }
 
+        File tokensDirectory = new File(appConfig.getDataDir(), "tokens/gmail");
+        if (!tokensDirectory.exists()) tokensDirectory.mkdirs();
+
         try {
             NetHttpTransport httpTransport = GoogleNetHttpTransport.newTrustedTransport();
             GsonFactory jsonFactory = GsonFactory.getDefaultInstance();
@@ -131,25 +135,63 @@ public class GoogleGmailProvider implements GmailProvider {
             );
 
             GoogleClientSecrets secrets = GoogleClientSecrets.load(jsonFactory, new StringReader(clientSecretsJson));
-            File tokensDirectory = new File(appConfig.getDataDir(), "tokens/gmail");
-            if (!tokensDirectory.exists()) tokensDirectory.mkdirs();
 
+            // Phase 1: Validate existing stored token if present
+            FileDataStoreFactory dataStoreFactory = new FileDataStoreFactory(tokensDirectory);
             GoogleAuthorizationCodeFlow flow = new GoogleAuthorizationCodeFlow.Builder(
                     httpTransport, jsonFactory, secrets, SCOPES)
-                    .setDataStoreFactory(new FileDataStoreFactory(tokensDirectory))
+                    .setDataStoreFactory(dataStoreFactory)
                     .setAccessType("offline")
                     .build();
 
-            Credential credential;
+            Credential credential = flow.loadCredential("user");
+            if (credential != null && credential.getRefreshToken() != null) {
+                log.info("Found existing stored Gmail OAuth session. Verifying token freshness with Google...");
+                try {
+                    boolean refreshed = credential.refreshToken();
+                    if (refreshed && credential.getAccessToken() != null) {
+                        Gmail testService = new Gmail.Builder(httpTransport, jsonFactory, credential)
+                                .setApplicationName(APPLICATION_NAME)
+                                .build();
+                        var profile = testService.users().getProfile("me").execute();
+                        this.gmailService = testService;
+                        String userEmail = profile.getEmailAddress();
+                        this.currentStatus = new ProviderConnectionStatus(
+                                ProviderType.GMAIL, true, userEmail, Instant.now(),
+                                "Connected (Authorized via Google OAuth2)", "", SCOPES, true
+                        );
+                        log.info("Stored Gmail OAuth token is valid. Connected to mailbox: {}", userEmail);
+                        return true;
+                    }
+                } catch (TokenResponseException tre) {
+                    log.warn("Stored Gmail token expired or revoked ({}: {}). Purging stale cache.", tre.getStatusCode(), tre.getContent());
+                    purgeStoredTokens();
+                } catch (Exception ex) {
+                    log.warn("Stored Gmail token validation failed ({}). Clearing cache to force fresh sign-in.", ex.getMessage());
+                    purgeStoredTokens();
+                }
+            }
+
+            // Phase 2: Stored token missing or invalid - launch fresh browser-based authorization
+            log.info("Initiating fresh Google OAuth2 interactive sign-in flow...");
+            purgeStoredTokens();
+
+            FileDataStoreFactory freshDataStoreFactory = new FileDataStoreFactory(tokensDirectory);
+            GoogleAuthorizationCodeFlow freshFlow = new GoogleAuthorizationCodeFlow.Builder(
+                    httpTransport, jsonFactory, secrets, SCOPES)
+                    .setDataStoreFactory(freshDataStoreFactory)
+                    .setAccessType("offline")
+                    .build();
+
             int preferredPort = (redirectPort > 0 && isPortAvailable(redirectPort)) ? redirectPort : -1;
             try {
                 LocalServerReceiver receiver = new LocalServerReceiver.Builder().setPort(preferredPort).build();
-                credential = new AuthorizationCodeInstalledApp(flow, receiver).authorize("user");
+                credential = new AuthorizationCodeInstalledApp(freshFlow, receiver).authorize("user");
             } catch (Exception e) {
                 if (preferredPort != -1 && (e instanceof java.net.BindException || (e.getMessage() != null && e.getMessage().contains("already in use")))) {
                     log.warn("Port {} in use or in TIME_WAIT state, retrying with dynamic open port (-1)...", preferredPort);
                     LocalServerReceiver dynamicReceiver = new LocalServerReceiver.Builder().setPort(-1).build();
-                    credential = new AuthorizationCodeInstalledApp(flow, dynamicReceiver).authorize("user");
+                    credential = new AuthorizationCodeInstalledApp(freshFlow, dynamicReceiver).authorize("user");
                 } else {
                     throw e;
                 }
@@ -170,13 +212,53 @@ public class GoogleGmailProvider implements GmailProvider {
             return true;
 
         } catch (Exception e) {
-            this.lastErrorMessage = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
-            log.error("Gmail OAuth authorization failed: {}", e.getMessage(), e);
+            purgeStoredTokens();
+            this.lastErrorMessage = buildHelpfulErrorMessage(e);
+            log.error("Gmail OAuth authorization failed: {}", this.lastErrorMessage, e);
             this.currentStatus = new ProviderConnectionStatus(
                     ProviderType.GMAIL, false, "Authorization Failed", null,
-                    "OAuth Error: " + this.lastErrorMessage, this.lastErrorMessage, SCOPES, true
+                    "OAuth Error: " + (e.getMessage() != null ? e.getMessage() : "Unknown"), this.lastErrorMessage, SCOPES, true
             );
             return false;
+        }
+    }
+
+    private String buildHelpfulErrorMessage(Exception e) {
+        String msg = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+        if (msg.contains("invalid_grant")) {
+            return "400 Bad Request: invalid_grant\n\n" +
+                   "Google rejected the token grant. Possible root causes:\n" +
+                   "• Stale / Expired Session: Stale token cache was automatically wiped. Please click 'Connect Gmail' to log in cleanly in your browser.\n" +
+                   "• Test User Required: If your Google Cloud OAuth app is in 'Testing' mode, your Gmail address MUST be added under 'OAuth consent screen > Test users'.\n" +
+                   "• Authorization Code Expired: Code must be exchanged within 60 seconds of browser login.\n" +
+                   "• Client Secret: Verify that Client Secret matches Client ID in Google Cloud Console.\n" +
+                   "• System Clock: Ensure your Windows system time is accurately synchronized with internet time.";
+        }
+        if (msg.contains("access_denied")) {
+            return "Access Denied: Permissions were cancelled or not granted in the Google sign-in window.";
+        }
+        if (msg.contains("redirect_uri_mismatch")) {
+            return "400 redirect_uri_mismatch:\n" +
+                   "In Google Cloud Console, ensure your OAuth 2.0 Client is created as 'Desktop app' (Installed application).\n" +
+                   "If configured as 'Web application', you must add http://localhost:" + redirectPort + "/Callback to Authorized Redirect URIs.";
+        }
+        return msg;
+    }
+
+    private void purgeStoredTokens() {
+        try {
+            File tokensDirectory = new File(appConfig.getDataDir(), "tokens/gmail");
+            if (tokensDirectory.exists()) {
+                File[] files = tokensDirectory.listFiles();
+                if (files != null) {
+                    for (File f : files) {
+                        boolean deleted = f.delete();
+                        log.debug("Purged Gmail token file {}: {}", f.getName(), deleted);
+                    }
+                }
+            }
+        } catch (Exception ex) {
+            log.warn("Error purging Gmail token store: {}", ex.getMessage());
         }
     }
 
@@ -184,13 +266,7 @@ public class GoogleGmailProvider implements GmailProvider {
     public void disconnect() {
         this.gmailService = null;
         this.lastErrorMessage = null;
-        File tokensDirectory = new File(appConfig.getDataDir(), "tokens/gmail");
-        if (tokensDirectory.exists()) {
-            File[] files = tokensDirectory.listFiles();
-            if (files != null) {
-                for (File f : files) f.delete();
-            }
-        }
+        purgeStoredTokens();
         updateStatus();
         log.info("Gmail account disconnected and local OAuth tokens purged.");
     }
@@ -247,6 +323,15 @@ public class GoogleGmailProvider implements GmailProvider {
 
         } catch (Exception e) {
             log.error("Failed to fetch Gmail messages: {}", e.getMessage(), e);
+            String errMsg = e.getMessage() != null ? e.getMessage() : "";
+            if (errMsg.contains("invalid_grant") || errMsg.contains("401") || errMsg.contains("Token") || errMsg.contains("revoked")) {
+                purgeStoredTokens();
+                this.gmailService = null;
+                this.currentStatus = new ProviderConnectionStatus(
+                        ProviderType.GMAIL, false, currentStatus.getAccountEmail(),
+                        null, "Session Expired (Please Reconnect)", "OAuth session expired or invalidated. Please reconnect.", SCOPES, true
+                );
+            }
             throw new ProviderException("Gmail API Fetch Error: " + e.getMessage(), e);
         }
     }

@@ -32,6 +32,7 @@ public interface CaseRepository {
 
     void saveEvidence(EvidenceRecord record);
     List<EvidenceRecord> findEvidenceByCaseId(String caseId);
+    List<EvidenceRecord> findEvidenceByEmailId(String emailId);
 
     // Monitoring Checkpoints
     void saveCheckpoint(String providerKey, String lastCheckpoint);

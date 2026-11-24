@@ -137,10 +137,37 @@ public class DefaultMonitoringService implements MonitoringService {
     }
 
     @Override
+    public boolean hasAnyConnectedProvider() {
+        if (providers == null) return false;
+        return providers.values().stream().anyMatch(p -> p != null && p.getStatus().isConnected());
+    }
+
+    @Override
+    public int triggerSyncAllConnected(int maxMessagesPerProvider) {
+        if (providers == null || providers.isEmpty()) {
+            return 0;
+        }
+        int totalCount = 0;
+        for (EmailProvider provider : providers.values()) {
+            if (provider != null && provider.getStatus().isConnected()) {
+                totalCount += syncProviderMessages(provider, maxMessagesPerProvider);
+            }
+        }
+        return totalCount;
+    }
+
+    @Override
     public int triggerOnDemandSync(int maxMessages) {
         EmailProvider provider = providers.get(activeProviderType);
         if (provider == null || !provider.getStatus().isConnected()) {
             this.lastError = "Active provider is not connected.";
+            return 0;
+        }
+        return syncProviderMessages(provider, maxMessages);
+    }
+
+    private int syncProviderMessages(EmailProvider provider, int maxMessages) {
+        if (provider == null || !provider.getStatus().isConnected()) {
             return 0;
         }
 
@@ -175,15 +202,16 @@ public class DefaultMonitoringService implements MonitoringService {
                             .analystNotes("Case automatically generated during monitoring sync. Severity: " + result.getRiskAssessment().getRiskLevel().getLabel())
                             .associatedMessageIds(List.of(email.getId()))
                             .analysisResultIds(List.of(result.getAnalysisId()))
-                            .tags(List.of("AutomatedAlert", activeProviderType.name(), result.getRiskAssessment().getRiskLevel().name()))
+                            .tags(List.of("AutomatedAlert", provider.getProviderType().name(), result.getRiskAssessment().getRiskLevel().name()))
                             .build();
                     caseRepository.saveCase(autoCase);
                 }
             }
+            processedCount.addAndGet(count);
             this.lastError = "";
         } catch (Exception e) {
             this.lastError = e.getMessage();
-            log.error("On-demand synchronization error: {}", e.getMessage(), e);
+            log.error("Synchronization error for provider {}: {}", provider.getProviderType(), e.getMessage(), e);
         }
         return count;
     }

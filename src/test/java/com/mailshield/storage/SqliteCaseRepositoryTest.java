@@ -115,6 +115,58 @@ public class SqliteCaseRepositoryTest {
         List<EvidenceRecord> evidenceList = repository.findEvidenceByCaseId("CASE-TEST-100");
         assertThat(evidenceList).hasSize(1);
         assertThat(evidenceList.get(0).getRawMessageSha256()).isEqualTo("rawhash123");
+
+        List<EvidenceRecord> emailEvidence = repository.findEvidenceByEmailId("EVD-01");
+        assertThat(emailEvidence).isEmpty(); // Not yet associated with an emailId
+    }
+
+    @Test
+    @DisplayName("Should persist full email content and metadata for deep SOC inspection")
+    void testFullEmailContentPersistenceAndRetrieval() {
+        EmailMessage fullMsg = EmailMessage.builder()
+                .id("msg-full-01")
+                .providerMessageId("prov-full-01")
+                .providerSource(ProviderType.GMAIL)
+                .fromAddress("ciso@enterprise.com")
+                .fromDisplayName("Chief Information Security Officer")
+                .from("Chief Information Security Officer <ciso@enterprise.com>")
+                .replyTo("attacker@spoofed.com")
+                .returnPath("ciso@enterprise.com")
+                .subject("URGENT: Executive Wire Transfer Authorization")
+                .bodyText("Please authorize the $78,500 wire immediately.\nConfidential under NDA.")
+                .bodyHtml("<html><body><p>Please authorize the <strong>$78,500</strong> wire immediately.</p></body></html>")
+                .headers(List.of(
+                        new EmailHeader("From", "Chief Information Security Officer <ciso@enterprise.com>"),
+                        new EmailHeader("Reply-To", "attacker@spoofed.com"),
+                        new EmailHeader("X-Mailer", "Outlook 2026")
+                ))
+                .attachments(List.of(
+                        new EmailAttachmentMetadata("Invoice_Wire.pdf.exe", "application/x-msdownload", 45000, "abc123hash", true, "Double Extension")
+                ))
+                .extractedUrls(List.of(
+                        new ExtractedUrl("http://198.51.100.55/login", "http://198.51.100.55/login", "198.51.100.55", "/login", "http", "portal.company.com", false, true, false, false, false, true, List.of("Direct IP", "Anchor Mismatch"))
+                ))
+                .authResult(new AuthenticationResult(
+                        AuthenticationResult.AuthStatus.FAIL, "sender@evil.com",
+                        AuthenticationResult.AuthStatus.FAIL, "evil.com",
+                        AuthenticationResult.AuthStatus.FAIL, "reject", "raw-auth-header", true
+                ))
+                .rawSha256("d41d8cd98f00b204e9800998ecf8427e")
+                .build();
+
+        repository.saveEmailMessage(fullMsg);
+
+        Optional<EmailMessage> retrieved = repository.findEmailMessageById("msg-full-01");
+        assertThat(retrieved).isPresent();
+        EmailMessage m = retrieved.get();
+        assertThat(m.getBodyText()).contains("wire immediately");
+        assertThat(m.getBodyHtml()).contains("<strong>$78,500</strong>");
+        assertThat(m.getHeaders()).hasSize(3);
+        assertThat(m.getAttachments()).hasSize(1);
+        assertThat(m.getAttachments().get(0).getFilename()).isEqualTo("Invoice_Wire.pdf.exe");
+        assertThat(m.getExtractedUrls()).hasSize(1);
+        assertThat(m.getExtractedUrls().get(0).isMismatchWithAnchor()).isTrue();
+        assertThat(m.getAuthResult().getSpfStatus()).isEqualTo(AuthenticationResult.AuthStatus.FAIL);
     }
 }
 

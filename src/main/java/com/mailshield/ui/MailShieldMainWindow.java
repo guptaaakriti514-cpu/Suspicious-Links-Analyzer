@@ -28,6 +28,9 @@ public class MailShieldMainWindow extends JFrame {
     private final JPanel contentStage = new JPanel(cardLayout);
     private final Map<String, JButton> navButtons = new LinkedHashMap<>();
 
+    private final CaseRepository caseRepository;
+    private final MonitoringService monitoringService;
+
     private DashboardPanel dashboardPanel;
     private AnalyzeEmailPanel analyzePanel;
     private ConnectedInboxesPanel inboxesPanel;
@@ -39,6 +42,7 @@ public class MailShieldMainWindow extends JFrame {
     private SettingsSecurityPanel settingsPanel;
     private AboutHelpPanel aboutPanel;
 
+    private JLabel lblScreenBreadcrumb;
     private JLabel lblStatusProvider;
     private JLabel lblStatusMonitoring;
 
@@ -53,6 +57,9 @@ public class MailShieldMainWindow extends JFrame {
                                 Map<ProviderType, EmailProvider> providers) {
 
         super("MAILSHIELD — Advanced Email Threat Detection & Digital Forensics Platform v1.0.0");
+        this.caseRepository = caseRepository;
+        this.monitoringService = monitoringService;
+
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         setSize(1280, 820);
         setMinimumSize(new Dimension(1024, 700));
@@ -61,10 +68,10 @@ public class MailShieldMainWindow extends JFrame {
         UiTheme.setupFlatLaf();
 
         // Initialize 10 Screens
-        this.dashboardPanel = new DashboardPanel(caseRepository, providers, () -> switchScreen("ANALYZE"));
+        this.dashboardPanel = new DashboardPanel(caseRepository, providers, monitoringService, reportGenerator, () -> switchScreen("ANALYZE"));
         this.analyzePanel = new AnalyzeEmailPanel(emailParser, detectionEngine, caseRepository, evidenceManager, reportGenerator);
         this.inboxesPanel = new ConnectedInboxesPanel(providers, monitoringService, appConfig);
-        this.queuePanel = new InvestigationQueuePanel(caseRepository);
+        this.queuePanel = new InvestigationQueuePanel(caseRepository, monitoringService, reportGenerator);
         this.urlPanel = new UrlDomainAnalysisPanel(detectionEngine.getThreatIntelService());
         this.casesPanel = new CasesPanel(caseRepository);
         this.threatPanel = new ThreatIntelligencePanel(detectionEngine.getThreatIntelService());
@@ -86,16 +93,131 @@ public class MailShieldMainWindow extends JFrame {
         contentStage.add(settingsPanel, "SETTINGS");
         contentStage.add(aboutPanel, "ABOUT");
 
-        // Construct Root Layout
+        // Construct Root Layout with Top Bar
         JPanel root = new JPanel(new BorderLayout());
         root.setBackground(UiTheme.BG_DARK);
 
+        JPanel centerWrapper = new JPanel(new BorderLayout());
+        centerWrapper.setOpaque(false);
+        centerWrapper.add(createTopBar(monitoringService), BorderLayout.NORTH);
+        centerWrapper.add(contentStage, BorderLayout.CENTER);
+
         root.add(createSidebar(), BorderLayout.WEST);
-        root.add(contentStage, BorderLayout.CENTER);
+        root.add(centerWrapper, BorderLayout.CENTER);
         root.add(createStatusBar(monitoringService), BorderLayout.SOUTH);
 
         setContentPane(root);
         switchScreen("DASHBOARD");
+    }
+
+    private JPanel createTopBar(MonitoringService monitoringService) {
+        JPanel topBar = new JPanel(new BorderLayout(16, 0));
+        topBar.setBackground(UiTheme.SIDEBAR_BG);
+        topBar.setPreferredSize(new Dimension(0, 46));
+        topBar.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createMatteBorder(0, 0, 1, 0, UiTheme.BORDER_COLOR),
+                new EmptyBorder(8, 20, 8, 20)
+        ));
+
+        // Left: Current Breadcrumb & System Status
+        JPanel leftPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 0));
+        leftPanel.setOpaque(false);
+
+        JLabel lblShieldIcon = new JLabel("● SOC LIVE");
+        lblShieldIcon.setFont(UiTheme.FONT_BOLD);
+        lblShieldIcon.setForeground(UiTheme.COLOR_LOW);
+
+        JLabel lblSeparator = new JLabel("|");
+        lblSeparator.setForeground(UiTheme.TEXT_MUTED);
+
+        lblScreenBreadcrumb = new JLabel("Overview Dashboard");
+        lblScreenBreadcrumb.setFont(UiTheme.FONT_REGULAR);
+        lblScreenBreadcrumb.setForeground(UiTheme.TEXT_PRIMARY);
+
+        leftPanel.add(lblShieldIcon);
+        leftPanel.add(lblSeparator);
+        leftPanel.add(lblScreenBreadcrumb);
+
+        // Right: Refresh All Emails Button
+        JPanel rightPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 0));
+        rightPanel.setOpaque(false);
+
+        JButton btnGlobalRefresh = UiTheme.createStyledButton("↻ Refresh All Emails", UiTheme.ACCENT_BLUE);
+        btnGlobalRefresh.setToolTipText("Fetch incoming messages from all connected inboxes & refresh all records");
+        btnGlobalRefresh.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        btnGlobalRefresh.addActionListener(e -> triggerGlobalRefresh(btnGlobalRefresh, monitoringService));
+
+        rightPanel.add(btnGlobalRefresh);
+
+        topBar.add(leftPanel, BorderLayout.WEST);
+        topBar.add(rightPanel, BorderLayout.EAST);
+        return topBar;
+    }
+
+    private void triggerGlobalRefresh(JButton btn, MonitoringService monitoringService) {
+        if (btn != null) {
+            btn.setEnabled(false);
+            btn.setText("↻ Refreshing All Emails...");
+        }
+
+        SwingWorker<Integer, Void> worker = new SwingWorker<>() {
+            @Override
+            protected Integer doInBackground() {
+                int newCount = 0;
+                if (monitoringService != null && monitoringService.hasAnyConnectedProvider()) {
+                    newCount = monitoringService.triggerSyncAllConnected(25);
+                }
+                return newCount;
+            }
+
+            @Override
+            protected void done() {
+                try {
+                    int newCount = get();
+                    // Refresh all relevant active panels
+                    if (dashboardPanel != null) dashboardPanel.refreshData();
+                    if (queuePanel != null) queuePanel.refreshQueue();
+                    if (casesPanel != null) casesPanel.refreshCases();
+                    if (evidencePanel != null) evidencePanel.refreshEvidence();
+                    if (inboxesPanel != null) inboxesPanel.refreshStatus();
+
+                    int totalCount = caseRepository != null ? caseRepository.getTotalEmailCount() : 0;
+                    if (newCount > 0) {
+                        JOptionPane.showMessageDialog(MailShieldMainWindow.this,
+                                "✓ Inboxes Refreshed Successfully!\n\n" +
+                                "Ingested and analyzed: " + newCount + " new email(s).\n" +
+                                "Total emails in repository: " + totalCount + ".\n\n" +
+                                "All active views, threat indicators, and investigation queues have been updated.",
+                                "Refresh Complete", JOptionPane.INFORMATION_MESSAGE);
+                    } else if (monitoringService != null && monitoringService.hasAnyConnectedProvider()) {
+                        JOptionPane.showMessageDialog(MailShieldMainWindow.this,
+                                "✓ Inboxes Up-to-Date\n\n" +
+                                "Connected mailboxes were synchronized. No new incoming messages found.\n" +
+                                "Total emails in repository: " + totalCount + ".",
+                                "All Emails Refreshed", JOptionPane.INFORMATION_MESSAGE);
+                    } else {
+                        JOptionPane.showMessageDialog(MailShieldMainWindow.this,
+                                "✓ All Emails Refreshed\n\n" +
+                                "Loaded " + totalCount + " email record(s) from local forensic database.\n\n" +
+                                "ℹ To fetch live incoming emails from Google Gmail or Microsoft 365,\n" +
+                                "please connect an inbox in 'Connected Inboxes' (Screen 3).",
+                                "All Emails Refreshed", JOptionPane.INFORMATION_MESSAGE);
+                    }
+                } catch (Exception ex) {
+                    if (dashboardPanel != null) dashboardPanel.refreshData();
+                    if (queuePanel != null) queuePanel.refreshQueue();
+                    JOptionPane.showMessageDialog(MailShieldMainWindow.this,
+                            "Error during email synchronization: " + ex.getMessage(),
+                            "Refresh Warning", JOptionPane.WARNING_MESSAGE);
+                } finally {
+                    if (btn != null) {
+                        btn.setEnabled(true);
+                        btn.setText("↻ Refresh All Emails");
+                    }
+                }
+            }
+        };
+        worker.execute();
     }
 
     private JPanel createSidebar() {
@@ -183,6 +305,23 @@ public class MailShieldMainWindow extends JFrame {
 
     private void switchScreen(String screenKey) {
         cardLayout.show(contentStage, screenKey);
+
+        String screenTitle = switch (screenKey) {
+            case "DASHBOARD" -> "Overview Dashboard";
+            case "ANALYZE" -> "Deep Email Ingestion & Static Analysis";
+            case "INBOXES" -> "Connected Cloud Inboxes (OAuth2)";
+            case "QUEUE" -> "Email Investigation & Triage Queue";
+            case "URL_INSPECT" -> "URL & Domain Forensics";
+            case "CASES" -> "Incident Investigation Cases";
+            case "THREAT_INTEL" -> "Threat Intelligence & Curated Feeds";
+            case "REPORTS" -> "Forensics Evidence & Chain of Custody";
+            case "SETTINGS" -> "Platform Security & Settings";
+            case "ABOUT" -> "Academic Viva Guide & Threat Model";
+            default -> "Operations Console";
+        };
+        if (lblScreenBreadcrumb != null) {
+            lblScreenBreadcrumb.setText(screenTitle);
+        }
 
         for (Map.Entry<String, JButton> entry : navButtons.entrySet()) {
             boolean active = entry.getKey().equals(screenKey);

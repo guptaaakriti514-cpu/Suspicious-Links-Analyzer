@@ -50,7 +50,13 @@ public class SqliteCaseRepository implements CaseRepository {
                 "sent_date TEXT, " +
                 "body_preview TEXT, " +
                 "raw_sha256 TEXT, " +
-                "ingested_at TEXT" +
+                "ingested_at TEXT, " +
+                "body_text TEXT, " +
+                "body_html TEXT, " +
+                "headers_json TEXT, " +
+                "attachments_json TEXT, " +
+                "urls_json TEXT, " +
+                "auth_json TEXT" +
             ");",
 
             "CREATE TABLE IF NOT EXISTS analyses (" +
@@ -116,6 +122,14 @@ public class SqliteCaseRepository implements CaseRepository {
             for (String sql : ddlStatements) {
                 stmt.execute(sql);
             }
+            // Migrate existing schema if upgraded
+            try { stmt.execute("ALTER TABLE emails ADD COLUMN body_text TEXT;"); } catch (SQLException ignored) {}
+            try { stmt.execute("ALTER TABLE emails ADD COLUMN body_html TEXT;"); } catch (SQLException ignored) {}
+            try { stmt.execute("ALTER TABLE emails ADD COLUMN headers_json TEXT;"); } catch (SQLException ignored) {}
+            try { stmt.execute("ALTER TABLE emails ADD COLUMN attachments_json TEXT;"); } catch (SQLException ignored) {}
+            try { stmt.execute("ALTER TABLE emails ADD COLUMN urls_json TEXT;"); } catch (SQLException ignored) {}
+            try { stmt.execute("ALTER TABLE emails ADD COLUMN auth_json TEXT;"); } catch (SQLException ignored) {}
+
             log.info("SQLite database schema initialized successfully at {}", dbUrl);
         } catch (SQLException e) {
             log.error("Fatal error creating SQLite schema: {}", e.getMessage(), e);
@@ -126,8 +140,9 @@ public class SqliteCaseRepository implements CaseRepository {
     @Override
     public void saveEmailMessage(EmailMessage message) {
         String sql = "INSERT OR REPLACE INTO emails (id, provider_id, provider_source, from_addr, " +
-                "from_display_name, reply_to, return_path, subject, sent_date, body_preview, raw_sha256, ingested_at) " +
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+                "from_display_name, reply_to, return_path, subject, sent_date, body_preview, raw_sha256, ingested_at, " +
+                "body_text, body_html, headers_json, attachments_json, urls_json, auth_json) " +
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
 
         try (Connection conn = getConnection(); PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setString(1, message.getId());
@@ -138,13 +153,18 @@ public class SqliteCaseRepository implements CaseRepository {
             ps.setString(6, message.getReplyTo());
             ps.setString(7, message.getReturnPath());
             ps.setString(8, message.getSubject());
-            ps.setString(9, message.getDate().toString());
-            // Truncate preview to prevent storing unnecessary body text
+            ps.setString(9, message.getDate() != null ? message.getDate().toString() : Instant.now().toString());
             String preview = message.getBodyText();
-            if (preview.length() > 500) preview = preview.substring(0, 500) + "...";
-            ps.setString(10, preview);
+            if (preview != null && preview.length() > 500) preview = preview.substring(0, 500) + "...";
+            ps.setString(10, preview != null ? preview : "");
             ps.setString(11, message.getRawSha256());
-            ps.setString(12, message.getIngestedAt().toString());
+            ps.setString(12, message.getIngestedAt() != null ? message.getIngestedAt().toString() : Instant.now().toString());
+            ps.setString(13, message.getBodyText() != null ? message.getBodyText() : "");
+            ps.setString(14, message.getBodyHtml() != null ? message.getBodyHtml() : "");
+            ps.setString(15, message.getHeaders() != null ? gson.toJson(message.getHeaders()) : "[]");
+            ps.setString(16, message.getAttachments() != null ? gson.toJson(message.getAttachments()) : "[]");
+            ps.setString(17, message.getExtractedUrls() != null ? gson.toJson(message.getExtractedUrls()) : "[]");
+            ps.setString(18, message.getAuthResult() != null ? gson.toJson(message.getAuthResult()) : "{}");
             ps.executeUpdate();
         } catch (SQLException e) {
             log.error("Failed to save email message: {}", e.getMessage(), e);
@@ -425,6 +445,34 @@ public class SqliteCaseRepository implements CaseRepository {
     }
 
     @Override
+    public List<EvidenceRecord> findEvidenceByEmailId(String emailId) {
+        String sql = "SELECT * FROM evidence_records WHERE email_id = ? ORDER BY datetime(recorded_at) ASC";
+        List<EvidenceRecord> list = new ArrayList<>();
+        try (Connection conn = getConnection(); PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, emailId);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    list.add(new EvidenceRecord(
+                            rs.getString("evidence_id"),
+                            rs.getString("case_id"),
+                            rs.getString("raw_sha256"),
+                            rs.getString("normalized_sha256"),
+                            rs.getString("hash_algorithm"),
+                            Instant.parse(rs.getString("recorded_at")),
+                            rs.getString("evidence_type"),
+                            rs.getString("source_description"),
+                            rs.getLong("original_byte_size"),
+                            rs.getString("integrity_notes")
+                    ));
+                }
+            }
+        } catch (SQLException e) {
+            log.error("Error fetching evidence for email: {}", e.getMessage(), e);
+        }
+        return list;
+    }
+
+    @Override
     public void saveCheckpoint(String providerKey, String lastCheckpoint) {
         String sql = "INSERT OR REPLACE INTO monitoring_checkpoints (provider_key, last_checkpoint, updated_at) VALUES (?, ?, ?)";
         try (Connection conn = getConnection(); PreparedStatement ps = conn.prepareStatement(sql)) {
@@ -489,6 +537,54 @@ public class SqliteCaseRepository implements CaseRepository {
             pType = ProviderType.valueOf(rs.getString("provider_source"));
         } catch (Exception ignored) {}
 
+        String fullBodyText = "";
+        try {
+            fullBodyText = rs.getString("body_text");
+        } catch (SQLException ignored) {}
+        if (fullBodyText == null || fullBodyText.isBlank()) {
+            fullBodyText = rs.getString("body_preview");
+        }
+
+        String bodyHtml = "";
+        try {
+            bodyHtml = rs.getString("body_html");
+        } catch (SQLException ignored) {}
+
+        List<EmailHeader> headers = new ArrayList<>();
+        try {
+            String hj = rs.getString("headers_json");
+            if (hj != null && !hj.isBlank()) {
+                Type t = new TypeToken<ArrayList<EmailHeader>>(){}.getType();
+                headers = gson.fromJson(hj, t);
+            }
+        } catch (Exception ignored) {}
+
+        List<EmailAttachmentMetadata> attachments = new ArrayList<>();
+        try {
+            String aj = rs.getString("attachments_json");
+            if (aj != null && !aj.isBlank()) {
+                Type t = new TypeToken<ArrayList<EmailAttachmentMetadata>>(){}.getType();
+                attachments = gson.fromJson(aj, t);
+            }
+        } catch (Exception ignored) {}
+
+        List<ExtractedUrl> urls = new ArrayList<>();
+        try {
+            String uj = rs.getString("urls_json");
+            if (uj != null && !uj.isBlank()) {
+                Type t = new TypeToken<ArrayList<ExtractedUrl>>(){}.getType();
+                urls = gson.fromJson(uj, t);
+            }
+        } catch (Exception ignored) {}
+
+        AuthenticationResult auth = AuthenticationResult.missing();
+        try {
+            String authj = rs.getString("auth_json");
+            if (authj != null && !authj.isBlank()) {
+                auth = gson.fromJson(authj, AuthenticationResult.class);
+            }
+        } catch (Exception ignored) {}
+
         return EmailMessage.builder()
                 .id(rs.getString("id"))
                 .providerMessageId(rs.getString("provider_id"))
@@ -500,7 +596,12 @@ public class SqliteCaseRepository implements CaseRepository {
                 .returnPath(rs.getString("return_path"))
                 .subject(rs.getString("subject"))
                 .date(Instant.parse(rs.getString("sent_date")))
-                .bodyText(rs.getString("body_preview"))
+                .bodyText(fullBodyText != null ? fullBodyText : "")
+                .bodyHtml(bodyHtml != null ? bodyHtml : "")
+                .headers(headers != null ? headers : List.of())
+                .attachments(attachments != null ? attachments : List.of())
+                .extractedUrls(urls != null ? urls : List.of())
+                .authResult(auth != null ? auth : AuthenticationResult.missing())
                 .rawSha256(rs.getString("raw_sha256"))
                 .ingestedAt(Instant.parse(rs.getString("ingested_at")))
                 .build();
