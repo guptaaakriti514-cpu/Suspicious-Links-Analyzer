@@ -34,6 +34,9 @@ public class DashboardPanel extends JPanel {
     private final MonitoringService monitoringService;
     private final ReportGenerator reportGenerator;
 
+    private static final int INITIAL_LOAD   = 50;   // rows visible on first view
+    private static final int LOAD_MORE_STEP = 50;   // extra rows per "Load More" click
+
     private JLabel lblTotalEmails;
     private JLabel lblHighRisk;
     private JLabel lblCritical;
@@ -42,9 +45,14 @@ public class DashboardPanel extends JPanel {
     private JLabel lblOutlookStatus;
     private DefaultTableModel recentTableModel;
     private JTable recentTable;
+    private JButton btnLoadMore;
+    private JLabel lblEmailCount;
 
+    // All analyses/emails loaded from DB (up to current display limit)
     private final List<AnalysisResult> currentRecentAnalyses = new ArrayList<>();
-    private final List<EmailMessage> currentRecentEmails = new ArrayList<>();
+    private final List<EmailMessage>   currentRecentEmails   = new ArrayList<>();
+    // How many rows we are currently showing
+    private int displayedCount = INITIAL_LOAD;
 
     public DashboardPanel(CaseRepository caseRepository,
                           Map<ProviderType, EmailProvider> providers,
@@ -143,15 +151,29 @@ public class DashboardPanel extends JPanel {
         JPanel tableCard = UiTheme.createCardPanel();
         tableCard.setLayout(new BorderLayout(0, 10));
 
-        JPanel tblHeader = new JPanel(new BorderLayout());
+        // ── Table header with title, hint, and row-count label
+        JPanel tblHeader = new JPanel(new BorderLayout(8, 0));
         tblHeader.setOpaque(false);
+
         JLabel tblTitle = new JLabel("Recent Email Ingestions & Analysis Verdicts");
         tblTitle.setFont(UiTheme.FONT_HEADER);
-        JLabel tblHint = new JLabel("Double-click any email row to view its full content & forensic details  ");
+
+        JPanel tblHintPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0));
+        tblHintPanel.setOpaque(false);
+
+        lblEmailCount = new JLabel("Showing 0 emails");
+        lblEmailCount.setFont(UiTheme.FONT_SMALL);
+        lblEmailCount.setForeground(UiTheme.TEXT_MUTED);
+
+        JLabel tblHint = new JLabel("  Double-click any row to open full forensics  ");
         tblHint.setFont(UiTheme.FONT_SMALL);
         tblHint.setForeground(UiTheme.ACCENT_CYAN);
+
+        tblHintPanel.add(lblEmailCount);
+        tblHintPanel.add(tblHint);
+
         tblHeader.add(tblTitle, BorderLayout.WEST);
-        tblHeader.add(tblHint, BorderLayout.EAST);
+        tblHeader.add(tblHintPanel, BorderLayout.EAST);
         tableCard.add(tblHeader, BorderLayout.NORTH);
 
         String[] cols = {"Timestamp", "Sender Address", "Subject", "Risk Level", "Score", "Verdict Rationale"};
@@ -164,6 +186,8 @@ public class DashboardPanel extends JPanel {
         recentTable.setRowHeight(28);
         recentTable.setFont(UiTheme.FONT_REGULAR);
         recentTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        // Allow the table to fill the viewport so the scroll bar appears only when needed
+        recentTable.setFillsViewportHeight(true);
         recentTable.getColumnModel().getColumn(0).setPreferredWidth(120);
         recentTable.getColumnModel().getColumn(1).setPreferredWidth(160);
         recentTable.getColumnModel().getColumn(2).setPreferredWidth(200);
@@ -180,10 +204,26 @@ public class DashboardPanel extends JPanel {
             }
         });
 
-        JScrollPane scrollPane = new JScrollPane(recentTable);
+        // Scrollable pane — always shows a vertical scrollbar so the user can scroll 50 rows
+        JScrollPane scrollPane = new JScrollPane(recentTable,
+                JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED,
+                JScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED);
         scrollPane.getViewport().setBackground(UiTheme.BG_DARK);
         scrollPane.setBorder(BorderFactory.createLineBorder(UiTheme.BORDER_COLOR, 1));
         tableCard.add(scrollPane, BorderLayout.CENTER);
+
+        // ── "Load More" footer bar
+        JPanel footerBar = new JPanel(new FlowLayout(FlowLayout.CENTER, 12, 6));
+        footerBar.setOpaque(false);
+
+        btnLoadMore = UiTheme.createStyledButton("⬇  Load More Emails", UiTheme.CARD_BG);
+        btnLoadMore.setBorder(BorderFactory.createLineBorder(UiTheme.ACCENT_CYAN, 1));
+        btnLoadMore.setToolTipText("Load the next 50 emails from the database");
+        btnLoadMore.addActionListener(e -> loadMoreEmails());
+        btnLoadMore.setVisible(false); // shown only when there are more rows
+
+        footerBar.add(btnLoadMore);
+        tableCard.add(footerBar, BorderLayout.SOUTH);
 
         // Right side: Connected Inboxes Status Card
         JPanel inboxesCard = UiTheme.createCardPanel();
@@ -332,6 +372,55 @@ public class DashboardPanel extends JPanel {
         }
     }
 
+    /** Load the next batch of emails and append them to the table. */
+    private void loadMoreEmails() {
+        if (caseRepository == null) return;
+        displayedCount += LOAD_MORE_STEP;
+        populateTable(displayedCount);
+    }
+
+    /** Fill the table with up to {@code limit} most-recent analyses and update footer. */
+    private void populateTable(int limit) {
+        recentTableModel.setRowCount(0);
+        currentRecentAnalyses.clear();
+        currentRecentEmails.clear();
+
+        List<AnalysisResult> recent = caseRepository.findRecentAnalyses(limit);
+        for (AnalysisResult r : recent) {
+            var emailOpt = caseRepository.findEmailMessageById(r.getEmailMessageId());
+            if (emailOpt.isPresent()) {
+                EmailMessage em = emailOpt.get();
+                currentRecentAnalyses.add(r);
+                currentRecentEmails.add(em);
+                recentTableModel.addRow(new Object[]{
+                        TIME_FMT.format(r.getAnalyzedAt()),
+                        em.getFromAddress(),
+                        em.getSubject(),
+                        r.getRiskAssessment().getRiskLevel().getLabel(),
+                        r.getRiskAssessment().getScore() + "/100",
+                        r.getRiskAssessment().getExplanation()
+                });
+            }
+        }
+
+        int totalInDb = caseRepository.getTotalEmailCount();
+        int showing   = currentRecentEmails.size();
+
+        if (lblEmailCount != null) {
+            lblEmailCount.setText("Showing " + showing + " of " + totalInDb + " emails");
+        }
+
+        // Show "Load More" only when there are additional rows available
+        if (btnLoadMore != null) {
+            boolean hasMore = showing < totalInDb;
+            btnLoadMore.setVisible(hasMore);
+            if (hasMore) {
+                int remaining = totalInDb - showing;
+                btnLoadMore.setText("⬇  Load More Emails  (+" + Math.min(LOAD_MORE_STEP, remaining) + " rows)");
+            }
+        }
+    }
+
     public void refreshData() {
         if (caseRepository != null) {
             lblTotalEmails.setText(String.valueOf(caseRepository.getTotalEmailCount()));
@@ -339,28 +428,9 @@ public class DashboardPanel extends JPanel {
             lblCritical.setText(String.valueOf(caseRepository.getCriticalEmailCount()));
             lblOpenCases.setText(String.valueOf(caseRepository.getOpenCaseCount()));
 
-            // Update recent table
-            recentTableModel.setRowCount(0);
-            currentRecentAnalyses.clear();
-            currentRecentEmails.clear();
-
-            List<AnalysisResult> recent = caseRepository.findRecentAnalyses(15);
-            for (AnalysisResult r : recent) {
-                var emailOpt = caseRepository.findEmailMessageById(r.getEmailMessageId());
-                if (emailOpt.isPresent()) {
-                    EmailMessage em = emailOpt.get();
-                    currentRecentAnalyses.add(r);
-                    currentRecentEmails.add(em);
-                    recentTableModel.addRow(new Object[]{
-                            TIME_FMT.format(r.getAnalyzedAt()),
-                            em.getFromAddress(),
-                            em.getSubject(),
-                            r.getRiskAssessment().getRiskLevel().getLabel(),
-                            r.getRiskAssessment().getScore() + "/100",
-                            r.getRiskAssessment().getExplanation()
-                    });
-                }
-            }
+            // Reset to initial page size on a full refresh
+            displayedCount = INITIAL_LOAD;
+            populateTable(displayedCount);
         }
 
         // Check providers

@@ -138,19 +138,7 @@ public class MailShieldMainWindow extends JFrame {
         leftPanel.add(lblSeparator);
         leftPanel.add(lblScreenBreadcrumb);
 
-        // Right: Refresh All Emails Button
-        JPanel rightPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 0));
-        rightPanel.setOpaque(false);
-
-        JButton btnGlobalRefresh = UiTheme.createStyledButton("↻ Refresh All Emails", UiTheme.ACCENT_BLUE);
-        btnGlobalRefresh.setToolTipText("Fetch incoming messages from all connected inboxes & refresh all records");
-        btnGlobalRefresh.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-        btnGlobalRefresh.addActionListener(e -> triggerGlobalRefresh(btnGlobalRefresh, monitoringService));
-
-        rightPanel.add(btnGlobalRefresh);
-
         topBar.add(leftPanel, BorderLayout.WEST);
-        topBar.add(rightPanel, BorderLayout.EAST);
         return topBar;
     }
 
@@ -224,83 +212,178 @@ public class MailShieldMainWindow extends JFrame {
         JPanel sidebar = new JPanel();
         sidebar.setLayout(new BoxLayout(sidebar, BoxLayout.Y_AXIS));
         sidebar.setBackground(UiTheme.SIDEBAR_BG);
-        sidebar.setPreferredSize(new Dimension(230, 0));
+        sidebar.setPreferredSize(new Dimension(240, 0));
         sidebar.setBorder(BorderFactory.createMatteBorder(0, 0, 0, 1, UiTheme.BORDER_COLOR));
 
-        // Brand Banner
-        JPanel brandBox = new JPanel(new GridLayout(2, 1, 0, 2));
-        brandBox.setBackground(UiTheme.SIDEBAR_BG);
-        brandBox.setBorder(new EmptyBorder(18, 16, 18, 16));
+        // ── Logo / Brand block ──────────────────────────────────────────
+        JPanel brandBlock = new JPanel();
+        brandBlock.setLayout(new BoxLayout(brandBlock, BoxLayout.Y_AXIS));
+        brandBlock.setBackground(new Color(0x07, 0x0C, 0x14));   // slightly deeper than sidebar
+        brandBlock.setAlignmentX(Component.LEFT_ALIGNMENT);
+        brandBlock.setMaximumSize(new Dimension(240, 90));
+        brandBlock.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createMatteBorder(0, 0, 1, 0, new Color(0x38, 0xBD, 0xF8, 60)),
+                new EmptyBorder(18, 18, 14, 18)
+        ));
 
-        JLabel brandName = new JLabel("🛡 MAILSHIELD");
-        brandName.setFont(new Font("Segoe UI", Font.BOLD, 16));
+        // Shield emoji + name on one line
+        JPanel logoRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
+        logoRow.setOpaque(false);
+        logoRow.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+        JLabel logoIcon = new JLabel("🛡");
+        logoIcon.setFont(new Font("Segoe UI Emoji", Font.PLAIN, 26));
+
+        JPanel logoText = new JPanel();
+        logoText.setLayout(new BoxLayout(logoText, BoxLayout.Y_AXIS));
+        logoText.setOpaque(false);
+
+        JLabel brandName = new JLabel("MailShield");
+        brandName.setFont(new Font("Segoe UI", Font.BOLD, 17));
         brandName.setForeground(UiTheme.TEXT_PRIMARY);
 
-        JLabel brandSub = new JLabel("SOC Forensics & Detection");
-        brandSub.setFont(UiTheme.FONT_SMALL);
-        brandSub.setForeground(UiTheme.ACCENT_CYAN);
+        JLabel brandTagline = new JLabel("SOC Threat Detection");
+        brandTagline.setFont(new Font("Segoe UI", Font.PLAIN, 10));
+        brandTagline.setForeground(UiTheme.ACCENT_CYAN);
 
-        brandBox.add(brandName);
-        brandBox.add(brandSub);
-        sidebar.add(brandBox);
-        sidebar.add(Box.createVerticalStrut(10));
+        logoText.add(brandName);
+        logoText.add(brandTagline);
 
-        // Navigation Items
-        addNavButton(sidebar, "1. Overview Dashboard", "DASHBOARD");
-        addNavButton(sidebar, "2. Analyze Email", "ANALYZE");
-        addNavButton(sidebar, "3. Connected Inboxes", "INBOXES");
-        addNavButton(sidebar, "4. Investigation Queue", "QUEUE");
-        addNavButton(sidebar, "5. URL & Domain Forensics", "URL_INSPECT");
-        addNavButton(sidebar, "6. Investigation Cases", "CASES");
-        addNavButton(sidebar, "7. Threat Intelligence", "THREAT_INTEL");
-        addNavButton(sidebar, "8. Evidence & Reports", "REPORTS");
-        addNavButton(sidebar, "9. Settings & Security", "SETTINGS");
-        addNavButton(sidebar, "10. Help / Academic Viva", "ABOUT");
+        logoRow.add(logoIcon);
+        logoRow.add(logoText);
+        brandBlock.add(logoRow);
+
+        // Version badge row
+        JPanel badgeRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+        badgeRow.setOpaque(false);
+        badgeRow.setAlignmentX(Component.LEFT_ALIGNMENT);
+        badgeRow.setBorder(new EmptyBorder(6, 2, 0, 0));
+
+        JLabel badge = new JLabel("  v1.0  LIVE  ");
+        badge.setFont(new Font("Consolas", Font.BOLD, 10));
+        badge.setForeground(new Color(0x10, 0xB9, 0x81));
+        badge.setBackground(new Color(0x05, 0x25, 0x1A));
+        badge.setOpaque(true);
+        badge.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(new Color(0x10, 0xB9, 0x81, 100), 1),
+                new EmptyBorder(1, 4, 1, 4)
+        ));
+        badgeRow.add(badge);
+        brandBlock.add(badgeRow);
+
+        sidebar.add(brandBlock);
+
+        // ── Section label ───────────────────────────────────────────────
+        sidebar.add(createSectionLabel("NAVIGATION"));
+
+        // ── Nav items with icons ────────────────────────────────────────
+        addNavButton(sidebar, "DASHBOARD",    "⬛", "Overview Dashboard");
+        addNavButton(sidebar, "ANALYZE",      "📧", "Analyze Email");
+        addNavButton(sidebar, "INBOXES",      "📬", "Connected Inboxes");
+        addNavButton(sidebar, "QUEUE",        "📋", "Investigation Queue");
+        addNavButton(sidebar, "URL_INSPECT",  "🔗", "URL & Domain Forensics");
+        addNavButton(sidebar, "CASES",        "📁", "Investigation Cases");
+
+        sidebar.add(createSectionLabel("INTEL & ADMIN"));
+
+        addNavButton(sidebar, "THREAT_INTEL", "⚠", "Threat Intelligence");
+        addNavButton(sidebar, "REPORTS",      "📊", "Evidence & Reports");
+        addNavButton(sidebar, "SETTINGS",     "⚙", "Settings & Security");
+        addNavButton(sidebar, "ABOUT",        "❓", "Help & Documentation");
 
         sidebar.add(Box.createVerticalGlue());
 
-        // Offline Academic Demo Mode pill
-        JPanel vivaPill = new JPanel(new GridLayout(2, 1, 0, 2));
-        vivaPill.setBackground(new Color(0x13, 0x1D, 0x31));
-        vivaPill.setBorder(BorderFactory.createCompoundBorder(
-                BorderFactory.createLineBorder(UiTheme.BORDER_COLOR, 1),
-                new EmptyBorder(8, 10, 8, 10)
-        ));
-        JLabel lblViva1 = new JLabel("Academic Viva Mode");
-        lblViva1.setFont(UiTheme.FONT_BOLD);
-        lblViva1.setForeground(UiTheme.ACCENT_CYAN);
-        JLabel lblViva2 = new JLabel("Offline Fixtures Active");
-        lblViva2.setFont(UiTheme.FONT_SMALL);
-        lblViva2.setForeground(UiTheme.TEXT_MUTED);
-        vivaPill.add(lblViva1);
-        vivaPill.add(lblViva2);
+        // ── Bottom status pill ──────────────────────────────────────────
+        JPanel bottomPill = new JPanel(new BorderLayout());
+        bottomPill.setOpaque(false);
+        bottomPill.setBorder(new EmptyBorder(8, 14, 14, 14));
+        bottomPill.setAlignmentX(Component.LEFT_ALIGNMENT);
+        bottomPill.setMaximumSize(new Dimension(240, 50));
 
-        JPanel vivaWrapper = new JPanel(new BorderLayout());
-        vivaWrapper.setOpaque(false);
-        vivaWrapper.setBorder(new EmptyBorder(10, 12, 16, 12));
-        vivaWrapper.add(vivaPill, BorderLayout.CENTER);
-        sidebar.add(vivaWrapper);
+        JLabel lblEngine = new JLabel("● Engine Active  |  JDK 21 LTS");
+        lblEngine.setFont(new Font("Segoe UI", Font.PLAIN, 10));
+        lblEngine.setForeground(new Color(0x64, 0x74, 0x8B));
+        bottomPill.add(lblEngine, BorderLayout.CENTER);
+
+        sidebar.add(bottomPill);
 
         return sidebar;
     }
 
-    private void addNavButton(JPanel sidebar, String label, String screenKey) {
-        JButton btn = new JButton(label);
-        btn.setMaximumSize(new Dimension(210, 34));
-        btn.setPreferredSize(new Dimension(210, 34));
+    /** Small uppercase section divider label. */
+    private JPanel createSectionLabel(String text) {
+        JPanel wrapper = new JPanel(new BorderLayout());
+        wrapper.setOpaque(false);
+        wrapper.setMaximumSize(new Dimension(240, 30));
+        wrapper.setAlignmentX(Component.LEFT_ALIGNMENT);
+        wrapper.setBorder(new EmptyBorder(10, 16, 2, 16));
+
+        JLabel lbl = new JLabel(text);
+        lbl.setFont(new Font("Segoe UI", Font.BOLD, 10));
+        lbl.setForeground(new Color(0x47, 0x55, 0x69));   // very muted grey
+        wrapper.add(lbl, BorderLayout.WEST);
+        return wrapper;
+    }
+
+    private void addNavButton(JPanel sidebar, String screenKey, String icon, String label) {
+        JButton btn = new JButton() {
+            @Override
+            protected void paintComponent(Graphics g) {
+                // Active state: left cyan accent bar + subtle highlight
+                boolean active = UiTheme.ACCENT_CYAN.equals(getForeground())
+                        && !UiTheme.TEXT_MUTED.equals(getForeground());
+                if (getBackground() != UiTheme.SIDEBAR_BG) {
+                    Graphics2D g2 = (Graphics2D) g;
+                    g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                    // Highlight background
+                    g2.setColor(new Color(0x1E, 0x29, 0x3B, 180));
+                    g2.fillRoundRect(4, 2, getWidth() - 8, getHeight() - 4, 8, 8);
+                    // Left cyan indicator strip
+                    g2.setColor(UiTheme.ACCENT_CYAN);
+                    g2.fillRoundRect(0, 6, 3, getHeight() - 12, 3, 3);
+                }
+                super.paintComponent(g);
+            }
+        };
+
+        // Build icon + label HTML
+        btn.setText("<html><table cellpadding='0' cellspacing='0'><tr>"
+                + "<td style='font-size:13px;padding-right:9px'>" + icon + "</td>"
+                + "<td style='font-size:12px'>" + label + "</td>"
+                + "</tr></table></html>");
+
+        btn.setMaximumSize(new Dimension(236, 38));
+        btn.setPreferredSize(new Dimension(236, 38));
+        btn.setMinimumSize(new Dimension(100, 38));
         btn.setFont(UiTheme.FONT_REGULAR);
         btn.setForeground(UiTheme.TEXT_MUTED);
         btn.setBackground(UiTheme.SIDEBAR_BG);
         btn.setHorizontalAlignment(SwingConstants.LEFT);
-        btn.setBorder(new EmptyBorder(6, 16, 6, 16));
+        btn.setBorder(new EmptyBorder(5, 14, 5, 10));
         btn.setFocusPainted(false);
+        btn.setContentAreaFilled(false);   // we do custom painting
+        btn.setOpaque(false);
         btn.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+
+        // Hover effect
+        btn.addMouseListener(new java.awt.event.MouseAdapter() {
+            @Override public void mouseEntered(java.awt.event.MouseEvent e) {
+                if (btn.getBackground() == UiTheme.SIDEBAR_BG) {   // not active
+                    btn.setForeground(UiTheme.TEXT_PRIMARY);
+                }
+            }
+            @Override public void mouseExited(java.awt.event.MouseEvent e) {
+                if (btn.getBackground() == UiTheme.SIDEBAR_BG) {
+                    btn.setForeground(UiTheme.TEXT_MUTED);
+                }
+            }
+        });
 
         btn.addActionListener(e -> switchScreen(screenKey));
 
         navButtons.put(screenKey, btn);
         sidebar.add(btn);
-        sidebar.add(Box.createVerticalStrut(4));
+        sidebar.add(Box.createVerticalStrut(2));
     }
 
     private void switchScreen(String screenKey) {
@@ -329,6 +412,7 @@ public class MailShieldMainWindow extends JFrame {
             b.setBackground(active ? UiTheme.CARD_BG : UiTheme.SIDEBAR_BG);
             b.setForeground(active ? UiTheme.ACCENT_CYAN : UiTheme.TEXT_MUTED);
             b.setFont(active ? UiTheme.FONT_BOLD : UiTheme.FONT_REGULAR);
+            b.repaint();
         }
 
         // Auto-refresh data on panel switches
