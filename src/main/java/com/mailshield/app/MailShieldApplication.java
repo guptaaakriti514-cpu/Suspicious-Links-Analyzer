@@ -20,6 +20,8 @@ import com.mailshield.scoring.DefaultRiskScoringEngine;
 import com.mailshield.scoring.RiskScoringEngine;
 import com.mailshield.security.CredentialStore;
 import com.mailshield.security.DefaultCredentialStore;
+import com.mailshield.security.TokenManagementService;
+import com.mailshield.services.*;
 import com.mailshield.storage.CaseRepository;
 import com.mailshield.storage.SqliteCaseRepository;
 import com.mailshield.ui.MailShieldMainWindow;
@@ -29,9 +31,7 @@ import org.slf4j.LoggerFactory;
 
 import javax.swing.*;
 import java.awt.GraphicsEnvironment;
-import java.time.Instant;
 import java.util.EnumMap;
-import java.util.List;
 import java.util.Map;
 
 /**
@@ -50,12 +50,14 @@ public class MailShieldApplication {
         UiTheme.setupFlatLaf();
 
         try {
-            // 1. Config & Core Services
+            // 1. Config & Core Security Services
             AppConfig appConfig = AppConfig.getInstance();
-            CredentialStore credentialStore = new DefaultCredentialStore(appConfig.getDataDir());
+            TokenManagementService tokenManager = new TokenManagementService(appConfig.getDataDir());
+            CredentialStore credentialStore = new DefaultCredentialStore(tokenManager, appConfig.getDataDir());
             CaseRepository caseRepository = new SqliteCaseRepository(appConfig.getDbPath());
             EvidenceManager evidenceManager = new DefaultEvidenceManager(caseRepository);
             ReportGenerator reportGenerator = new HtmlReportGenerator();
+            NotificationService notificationService = new NotificationService();
 
             // 2. Detection Analyzers & Scoring Engine
             HeaderAnalyzer headerAnalyzer = new SafeHeaderAnalyzer();
@@ -70,14 +72,26 @@ public class MailShieldApplication {
                     headerAnalyzer, contentAnalyzer, urlAnalyzer, attachmentAnalyzer, threatIntel, scoringEngine
             );
 
-            // 3. Email Ingestion Providers
+            ThreatDetectionService threatDetectionService = new ThreatDetectionService(detectionEngine, threatIntel);
+            EmailAnalysisService emailAnalysisService = new EmailAnalysisService(
+                    threatDetectionService, caseRepository, evidenceManager, notificationService
+            );
+
+            // 3. Email Ingestion & OAuth Providers
+            OutlookOAuthService outlookOAuthService = new OutlookOAuthService(appConfig, tokenManager);
+            GmailOAuthService gmailOAuthService = new GmailOAuthService(appConfig, tokenManager);
+
             Map<ProviderType, EmailProvider> providers = new EnumMap<>(ProviderType.class);
             EmailProvider gmailProvider = new GoogleGmailProvider(emailParser, caseRepository, appConfig);
-            EmailProvider outlookProvider = new MicrosoftOutlookProvider(emailParser, caseRepository, appConfig);
+            EmailProvider outlookProvider = new MicrosoftOutlookProvider(emailParser, caseRepository, appConfig, outlookOAuthService);
             providers.put(ProviderType.GMAIL, gmailProvider);
             providers.put(ProviderType.OUTLOOK, outlookProvider);
 
-            // 4. Monitoring Service
+            // 4. Synchronization & Monitoring Services
+            EmailSyncService emailSyncService = new EmailSyncService(
+                    providers, emailAnalysisService, caseRepository, notificationService
+            );
+
             MonitoringService monitoringService = new DefaultMonitoringService(
                     providers, detectionEngine, caseRepository, evidenceManager
             );
@@ -109,16 +123,13 @@ public class MailShieldApplication {
 
             // Register Graceful Shutdown Hook
             Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-                log.info("Shutting down MailShield services...");
+                log.info("Shutting down MailShield platform...");
                 monitoringService.stopMonitoring();
-                caseRepository.close();
-            }));
+            }, "MailShield-ShutdownHook"));
 
         } catch (Exception e) {
-            log.error("Fatal exception during application startup: {}", e.getMessage(), e);
-            System.err.println("Fatal startup error: " + e.getMessage());
-            e.printStackTrace();
+            log.error("Fatal startup error in MailShield: {}", e.getMessage(), e);
+            System.err.println("Fatal MailShield startup error: " + e.getMessage());
         }
     }
 }
-

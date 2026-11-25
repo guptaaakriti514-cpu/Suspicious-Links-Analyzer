@@ -16,10 +16,10 @@ import java.time.format.DateTimeFormatter;
 import java.util.Map;
 
 /**
- * Screen 3: Connected Cloud Inboxes Management.
- * Provides transparent, honest configuration and OAuth authorization cards for
- * Google Gmail API and Microsoft Outlook Graph API.
- * Supports direct in-GUI credentials configuration, live connection status, and instant feedback.
+ * Screen 3: Connected Cloud Inboxes & Onboarding Management.
+ * Seamless, 1-click enterprise OAuth 2.0 PKCE mailbox integration.
+ * Users connect Google Gmail or Microsoft 365 directly through official vendor identity portals.
+ * Eliminates manual API keys or technical token configuration for end-users.
  */
 public class ConnectedInboxesPanel extends JPanel {
 
@@ -29,23 +29,30 @@ public class ConnectedInboxesPanel extends JPanel {
     private final Map<ProviderType, EmailProvider> providers;
     private final MonitoringService monitoringService;
     private final AppConfig appConfig;
+    private final Runnable onAccountChanged;
 
-    private JLabel lblGmailCredStatus;
     private JLabel lblGmailStatus;
     private JLabel lblGmailIdentity;
     private JLabel lblGmailLastSync;
+    private JButton btnGmailConnect;
+    private JButton btnGmailSync;
+    private JButton btnGmailDisconnect;
 
-    private JLabel lblOutlookCredStatus;
     private JLabel lblOutlookStatus;
     private JLabel lblOutlookIdentity;
     private JLabel lblOutlookLastSync;
+    private JButton btnOutlookConnect;
+    private JButton btnOutlookSync;
+    private JButton btnOutlookDisconnect;
 
     public ConnectedInboxesPanel(Map<ProviderType, EmailProvider> providers,
                                  MonitoringService monitoringService,
-                                 AppConfig appConfig) {
+                                 AppConfig appConfig,
+                                 Runnable onAccountChanged) {
         this.providers = providers;
         this.monitoringService = monitoringService;
         this.appConfig = appConfig != null ? appConfig : AppConfig.getInstance();
+        this.onAccountChanged = onAccountChanged;
 
         setLayout(new BorderLayout(16, 20));
         setBackground(UiTheme.BG_DARK);
@@ -56,8 +63,14 @@ public class ConnectedInboxesPanel extends JPanel {
         refreshStatus();
     }
 
+    public ConnectedInboxesPanel(Map<ProviderType, EmailProvider> providers,
+                                 MonitoringService monitoringService,
+                                 AppConfig appConfig) {
+        this(providers, monitoringService, appConfig, null);
+    }
+
     public ConnectedInboxesPanel(Map<ProviderType, EmailProvider> providers, MonitoringService monitoringService) {
-        this(providers, monitoringService, AppConfig.getInstance());
+        this(providers, monitoringService, AppConfig.getInstance(), null);
     }
 
     private void initHeader() {
@@ -67,10 +80,11 @@ public class ConnectedInboxesPanel extends JPanel {
         JPanel text = new JPanel(new GridLayout(2, 1, 0, 4));
         text.setOpaque(false);
 
-        JLabel title = new JLabel("Authorized Mailbox Integrations");
+        JLabel title = new JLabel("Secure your inbox with MailShield.");
         title.setFont(UiTheme.FONT_TITLE);
+        title.setForeground(UiTheme.TEXT_PRIMARY);
 
-        JLabel subtitle = new JLabel("Connect Google Gmail and Microsoft 365 inboxes directly from the GUI using official vendor OAuth 2.0 PKCE.");
+        JLabel subtitle = new JLabel("Connect your email account and let MailShield analyze suspicious messages, detect phishing attempts, and protect your digital identity.");
         subtitle.setFont(UiTheme.FONT_SMALL);
         subtitle.setForeground(UiTheme.TEXT_MUTED);
 
@@ -80,8 +94,8 @@ public class ConnectedInboxesPanel extends JPanel {
         JPanel btnPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
         btnPanel.setOpaque(false);
 
-        JButton btnSyncAll = UiTheme.createStyledButton("↻ Refresh & Sync Inboxes", UiTheme.ACCENT_BLUE);
-        btnSyncAll.setToolTipText("Fetch incoming messages from all authorized accounts");
+        JButton btnSyncAll = UiTheme.createStyledButton("↻ Sync Inboxes Now", UiTheme.ACCENT_BLUE);
+        btnSyncAll.setToolTipText("Fetch and analyze new incoming messages from all authorized accounts");
         btnSyncAll.addActionListener(e -> syncAllInboxes(btnSyncAll));
 
         btnPanel.add(btnSyncAll);
@@ -94,8 +108,8 @@ public class ConnectedInboxesPanel extends JPanel {
     private void syncAllInboxes(JButton btn) {
         if (monitoringService == null || !monitoringService.hasAnyConnectedProvider()) {
             JOptionPane.showMessageDialog(this,
-                    "No mailboxes are currently connected.\n\n" +
-                    "Please click 'Connect Gmail' or 'Connect Outlook' below to authorize an inbox.",
+                    "No email inboxes are currently connected.\n\n" +
+                    "Please click 'Connect Gmail' or 'Connect Outlook' below to authorize an account.",
                     "No Connected Inboxes", JOptionPane.INFORMATION_MESSAGE);
             refreshStatus();
             return;
@@ -117,11 +131,12 @@ public class ConnectedInboxesPanel extends JPanel {
                 try {
                     int count = get();
                     refreshStatus();
+                    if (onAccountChanged != null) onAccountChanged.run();
                     JOptionPane.showMessageDialog(ConnectedInboxesPanel.this,
-                            "✓ Synchronization pass completed!\n\n" +
+                            "✓ Synchronization pass completed successfully!\n\n" +
                             "Ingested and analyzed: " + count + " new email message(s).\n\n" +
-                            "Inspect results in 'Overview Dashboard' or 'Investigation Queue'.",
-                            "Inboxes Refreshed", JOptionPane.INFORMATION_MESSAGE);
+                            "Inspect full forensics in 'Overview Dashboard' or 'Investigation Queue'.",
+                            "Inboxes Synchronized", JOptionPane.INFORMATION_MESSAGE);
                 } catch (Exception ex) {
                     refreshStatus();
                     JOptionPane.showMessageDialog(ConnectedInboxesPanel.this,
@@ -130,7 +145,7 @@ public class ConnectedInboxesPanel extends JPanel {
                 } finally {
                     if (btn != null) {
                         btn.setEnabled(true);
-                        btn.setText("↻ Refresh & Sync Inboxes");
+                        btn.setText("↻ Sync Inboxes Now");
                     }
                 }
             }
@@ -139,6 +154,9 @@ public class ConnectedInboxesPanel extends JPanel {
     }
 
     private void initCards() {
+        JPanel centerContainer = new JPanel(new BorderLayout(0, 18));
+        centerContainer.setOpaque(false);
+
         JPanel content = new JPanel(new GridLayout(1, 2, 20, 0));
         content.setOpaque(false);
 
@@ -148,354 +166,213 @@ public class ConnectedInboxesPanel extends JPanel {
         // 2. Microsoft Outlook / 365 Card
         content.add(createOutlookCard());
 
-        add(content, BorderLayout.CENTER);
+        centerContainer.add(content, BorderLayout.CENTER);
 
         // Bottom Consent and Security Guarantee
         JPanel bottomNotice = UiTheme.createCardPanel();
-        bottomNotice.setLayout(new BorderLayout());
-        JLabel lblNotice = new JLabel("<html><strong style='color:#38bdf8;'>Security & Privacy Design Guarantee:</strong> " +
-                "MailShield connects exclusively via official vendor OAuth 2.0 identity endpoints with <strong>read-only mailbox access</strong> (<code>GmailScopes.GMAIL_READONLY</code> / <code>Mail.Read</code>). " +
-                "This application NEVER collects or handles your account passwords, never transmits, modifies, deletes, or forwards emails. All message analysis and SQLite persistence take place locally on this workstation.</html>");
-        lblNotice.setFont(UiTheme.FONT_SMALL);
-        bottomNotice.add(lblNotice, BorderLayout.CENTER);
-        add(bottomNotice, BorderLayout.SOUTH);
+        bottomNotice.setLayout(new GridLayout(1, 4, 16, 0));
+
+        bottomNotice.add(createSecurityPill("● Zero Password Handling", "Direct vendor OAuth 2.0 PKCE redirection. MailShield never handles passwords."));
+        bottomNotice.add(createSecurityPill("● Strict Read-Only Scopes", "Limited strictly to gmail.readonly and Mail.Read. Never alters or sends mail."));
+        bottomNotice.add(createSecurityPill("● AES-256-GCM Vault", "All session credentials & tokens encrypted at rest with authenticated encryption."));
+        bottomNotice.add(createSecurityPill("● 100% Local Forensics", "Forensics and detection pipeline run locally on workstation without data leakage."));
+
+        centerContainer.add(bottomNotice, BorderLayout.SOUTH);
+        add(centerContainer, BorderLayout.CENTER);
+    }
+
+    private JPanel createSecurityPill(String title, String desc) {
+        JPanel pill = new JPanel(new GridLayout(2, 1, 0, 4));
+        pill.setOpaque(false);
+        JLabel lblTitle = new JLabel(title);
+        lblTitle.setFont(UiTheme.FONT_BOLD);
+        lblTitle.setForeground(UiTheme.ACCENT_CYAN);
+        JLabel lblDesc = new JLabel("<html><small style='color:#94a3b8;'>" + desc + "</small></html>");
+        pill.add(lblTitle);
+        pill.add(lblDesc);
+        return pill;
     }
 
     private JPanel createGmailCard() {
         JPanel card = UiTheme.createCardPanel();
-        card.setLayout(new BoxLayout(card, BoxLayout.Y_AXIS));
+        card.setLayout(new BorderLayout(0, 16));
 
-        JLabel title = new JLabel("Google Gmail API");
+        // Top Section: Title & Description
+        JPanel topSection = new JPanel();
+        topSection.setLayout(new BoxLayout(topSection, BoxLayout.Y_AXIS));
+        topSection.setOpaque(false);
+
+        JPanel headerRow = new JPanel(new BorderLayout());
+        headerRow.setOpaque(false);
+
+        JLabel title = new JLabel("Google Gmail");
         title.setFont(UiTheme.FONT_HEADER);
         title.setForeground(UiTheme.ACCENT_CYAN);
 
-        JLabel desc = new JLabel("<html>Connects via official Google OAuth2 PKCE installed desktop flow. Minimum scope: <code>gmail.readonly</code>.</html>");
+        JLabel badge = new JLabel("Official OAuth 2.0 PKCE");
+        badge.setFont(UiTheme.FONT_SMALL);
+        badge.setForeground(UiTheme.TEXT_MUTED);
+
+        headerRow.add(title, BorderLayout.WEST);
+        headerRow.add(badge, BorderLayout.EAST);
+        topSection.add(headerRow);
+        topSection.add(Box.createVerticalStrut(6));
+
+        JLabel desc = new JLabel("<html>Connect personal or Google Workspace accounts with 1-click official Google authorization. Scopes: <code>gmail.readonly</code>.</html>");
         desc.setFont(UiTheme.FONT_SMALL);
         desc.setForeground(UiTheme.TEXT_MUTED);
+        topSection.add(desc);
 
-        lblGmailCredStatus = new JLabel("Credentials: Checking...");
-        lblGmailCredStatus.setFont(UiTheme.FONT_SMALL);
+        // Center Section: Status Display Box
+        JPanel statusBox = new JPanel();
+        statusBox.setLayout(new BoxLayout(statusBox, BoxLayout.Y_AXIS));
+        statusBox.setBackground(UiTheme.BG_DARK);
+        statusBox.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(UiTheme.BORDER_COLOR, 1),
+                new EmptyBorder(14, 16, 14, 16)
+        ));
 
-        lblGmailStatus = new JLabel("Session: Disconnected");
+        lblGmailStatus = new JLabel("Status: Disconnected");
+        lblGmailStatus.setFont(UiTheme.FONT_REGULAR);
+
         lblGmailIdentity = new JLabel("Authorized Mailbox: Not connected");
-        lblGmailLastSync = new JLabel("Last Synchronized: Never");
+        lblGmailIdentity.setFont(UiTheme.FONT_REGULAR);
 
-        JPanel btnBar = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
+        JLabel lblScope = new JLabel("Permissions: Read-Only Email Inspection (gmail.readonly)");
+        lblScope.setFont(UiTheme.FONT_SMALL);
+        lblScope.setForeground(UiTheme.TEXT_MUTED);
+
+        lblGmailLastSync = new JLabel("Last Synchronized: Never");
+        lblGmailLastSync.setFont(UiTheme.FONT_SMALL);
+        lblGmailLastSync.setForeground(UiTheme.TEXT_MUTED);
+
+        statusBox.add(lblGmailStatus);
+        statusBox.add(Box.createVerticalStrut(8));
+        statusBox.add(lblGmailIdentity);
+        statusBox.add(Box.createVerticalStrut(8));
+        statusBox.add(lblScope);
+        statusBox.add(Box.createVerticalStrut(8));
+        statusBox.add(lblGmailLastSync);
+
+        // Bottom Section: Actions
+        JPanel btnBar = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 0));
         btnBar.setOpaque(false);
 
-        JButton btnConfig = UiTheme.createStyledButton("⚙ Configure", UiTheme.CARD_BG);
-        btnConfig.setBorder(BorderFactory.createLineBorder(UiTheme.ACCENT_CYAN, 1));
-        btnConfig.addActionListener(e -> showGmailConfigDialog());
+        btnGmailConnect = UiTheme.createStyledButton("Connect Gmail", UiTheme.ACCENT_BLUE);
+        btnGmailConnect.setPreferredSize(new Dimension(170, 36));
+        btnGmailConnect.addActionListener(e -> connectGmail());
 
-        JButton btnConnect = UiTheme.createStyledButton("Connect Gmail", UiTheme.ACCENT_BLUE);
-        btnConnect.addActionListener(e -> connectGmail());
+        btnGmailSync = UiTheme.createStyledButton("↻ Sync Now", UiTheme.CARD_BG);
+        btnGmailSync.setBorder(BorderFactory.createLineBorder(UiTheme.ACCENT_CYAN, 1));
+        btnGmailSync.addActionListener(e -> syncProvider(ProviderType.GMAIL));
 
-        JButton btnSync = UiTheme.createStyledButton("Sync (10 Msgs)", UiTheme.CARD_BG);
-        btnSync.setBorder(BorderFactory.createLineBorder(UiTheme.BORDER_COLOR, 1));
-        btnSync.addActionListener(e -> syncProvider(ProviderType.GMAIL));
+        btnGmailDisconnect = UiTheme.createStyledButton("Disconnect", UiTheme.CARD_BG);
+        btnGmailDisconnect.setBorder(BorderFactory.createLineBorder(UiTheme.COLOR_CRITICAL, 1));
+        btnGmailDisconnect.addActionListener(e -> disconnectProvider(ProviderType.GMAIL));
 
-        JButton btnDisconnect = UiTheme.createStyledButton("Disconnect", UiTheme.CARD_BG);
-        btnDisconnect.setBorder(BorderFactory.createLineBorder(UiTheme.COLOR_CRITICAL, 1));
-        btnDisconnect.addActionListener(e -> disconnectProvider(ProviderType.GMAIL));
+        btnBar.add(btnGmailConnect);
+        btnBar.add(btnGmailSync);
+        btnBar.add(btnGmailDisconnect);
 
-        btnBar.add(btnConfig);
-        btnBar.add(btnConnect);
-        btnBar.add(btnSync);
-        btnBar.add(btnDisconnect);
-
-        card.add(title);
-        card.add(Box.createVerticalStrut(6));
-        card.add(desc);
-        card.add(Box.createVerticalStrut(12));
-        card.add(lblGmailCredStatus);
-        card.add(Box.createVerticalStrut(6));
-        card.add(lblGmailStatus);
-        card.add(Box.createVerticalStrut(6));
-        card.add(lblGmailIdentity);
-        card.add(Box.createVerticalStrut(6));
-        card.add(lblGmailLastSync);
-        card.add(Box.createVerticalStrut(18));
-        card.add(btnBar);
-        card.add(Box.createVerticalGlue());
+        card.add(topSection, BorderLayout.NORTH);
+        card.add(statusBox, BorderLayout.CENTER);
+        card.add(btnBar, BorderLayout.SOUTH);
 
         return card;
     }
 
     private JPanel createOutlookCard() {
         JPanel card = UiTheme.createCardPanel();
-        card.setLayout(new BoxLayout(card, BoxLayout.Y_AXIS));
+        card.setLayout(new BorderLayout(0, 16));
+
+        // Top Section: Title & Description
+        JPanel topSection = new JPanel();
+        topSection.setLayout(new BoxLayout(topSection, BoxLayout.Y_AXIS));
+        topSection.setOpaque(false);
+
+        JPanel headerRow = new JPanel(new BorderLayout());
+        headerRow.setOpaque(false);
 
         JLabel title = new JLabel("Microsoft Outlook / 365");
         title.setFont(UiTheme.FONT_HEADER);
         title.setForeground(UiTheme.ACCENT_CYAN);
 
-        JLabel desc = new JLabel("<html>Connects via Microsoft Authentication Library (MSAL) and Microsoft Graph API. Minimum scope: <code>Mail.Read</code>.</html>");
+        JLabel badge = new JLabel("Microsoft Entra ID");
+        badge.setFont(UiTheme.FONT_SMALL);
+        badge.setForeground(UiTheme.TEXT_MUTED);
+
+        headerRow.add(title, BorderLayout.WEST);
+        headerRow.add(badge, BorderLayout.EAST);
+        topSection.add(headerRow);
+        topSection.add(Box.createVerticalStrut(6));
+
+        JLabel desc = new JLabel("<html>Connect Outlook.com, Hotmail, or Microsoft 365 work accounts seamlessly via Microsoft Graph API. Scopes: <code>Mail.Read</code>.</html>");
         desc.setFont(UiTheme.FONT_SMALL);
         desc.setForeground(UiTheme.TEXT_MUTED);
+        topSection.add(desc);
 
-        lblOutlookCredStatus = new JLabel("Credentials: Checking...");
-        lblOutlookCredStatus.setFont(UiTheme.FONT_SMALL);
+        // Center Section: Status Display Box
+        JPanel statusBox = new JPanel();
+        statusBox.setLayout(new BoxLayout(statusBox, BoxLayout.Y_AXIS));
+        statusBox.setBackground(UiTheme.BG_DARK);
+        statusBox.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(UiTheme.BORDER_COLOR, 1),
+                new EmptyBorder(14, 16, 14, 16)
+        ));
 
-        lblOutlookStatus = new JLabel("Session: Disconnected");
+        lblOutlookStatus = new JLabel("Status: Disconnected");
+        lblOutlookStatus.setFont(UiTheme.FONT_REGULAR);
+
         lblOutlookIdentity = new JLabel("Authorized Mailbox: Not connected");
-        lblOutlookLastSync = new JLabel("Last Synchronized: Never");
+        lblOutlookIdentity.setFont(UiTheme.FONT_REGULAR);
 
-        JPanel btnBar = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
+        JLabel lblScope = new JLabel("Permissions: Read-Only Email Inspection (Mail.Read)");
+        lblScope.setFont(UiTheme.FONT_SMALL);
+        lblScope.setForeground(UiTheme.TEXT_MUTED);
+
+        lblOutlookLastSync = new JLabel("Last Synchronized: Never");
+        lblOutlookLastSync.setFont(UiTheme.FONT_SMALL);
+        lblOutlookLastSync.setForeground(UiTheme.TEXT_MUTED);
+
+        statusBox.add(lblOutlookStatus);
+        statusBox.add(Box.createVerticalStrut(8));
+        statusBox.add(lblOutlookIdentity);
+        statusBox.add(Box.createVerticalStrut(8));
+        statusBox.add(lblScope);
+        statusBox.add(Box.createVerticalStrut(8));
+        statusBox.add(lblOutlookLastSync);
+
+        // Bottom Section: Actions
+        JPanel btnBar = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 0));
         btnBar.setOpaque(false);
 
-        JButton btnConfig = UiTheme.createStyledButton("⚙ Configure", UiTheme.CARD_BG);
-        btnConfig.setBorder(BorderFactory.createLineBorder(UiTheme.ACCENT_CYAN, 1));
-        btnConfig.addActionListener(e -> showOutlookConfigDialog());
+        btnOutlookConnect = UiTheme.createStyledButton("Connect Outlook", UiTheme.ACCENT_BLUE);
+        btnOutlookConnect.setPreferredSize(new Dimension(170, 36));
+        btnOutlookConnect.addActionListener(e -> connectOutlook());
 
-        JButton btnConnect = UiTheme.createStyledButton("Connect Outlook", UiTheme.ACCENT_BLUE);
-        btnConnect.addActionListener(e -> connectOutlook());
+        btnOutlookSync = UiTheme.createStyledButton("↻ Sync Now", UiTheme.CARD_BG);
+        btnOutlookSync.setBorder(BorderFactory.createLineBorder(UiTheme.ACCENT_CYAN, 1));
+        btnOutlookSync.addActionListener(e -> syncProvider(ProviderType.OUTLOOK));
 
-        JButton btnSync = UiTheme.createStyledButton("Sync (10 Msgs)", UiTheme.CARD_BG);
-        btnSync.setBorder(BorderFactory.createLineBorder(UiTheme.BORDER_COLOR, 1));
-        btnSync.addActionListener(e -> syncProvider(ProviderType.OUTLOOK));
+        btnOutlookDisconnect = UiTheme.createStyledButton("Disconnect", UiTheme.CARD_BG);
+        btnOutlookDisconnect.setBorder(BorderFactory.createLineBorder(UiTheme.COLOR_CRITICAL, 1));
+        btnOutlookDisconnect.addActionListener(e -> disconnectProvider(ProviderType.OUTLOOK));
 
-        JButton btnDisconnect = UiTheme.createStyledButton("Disconnect", UiTheme.CARD_BG);
-        btnDisconnect.setBorder(BorderFactory.createLineBorder(UiTheme.COLOR_CRITICAL, 1));
-        btnDisconnect.addActionListener(e -> disconnectProvider(ProviderType.OUTLOOK));
+        btnBar.add(btnOutlookConnect);
+        btnBar.add(btnOutlookSync);
+        btnBar.add(btnOutlookDisconnect);
 
-        btnBar.add(btnConfig);
-        btnBar.add(btnConnect);
-        btnBar.add(btnSync);
-        btnBar.add(btnDisconnect);
-
-        card.add(title);
-        card.add(Box.createVerticalStrut(6));
-        card.add(desc);
-        card.add(Box.createVerticalStrut(12));
-        card.add(lblOutlookCredStatus);
-        card.add(Box.createVerticalStrut(6));
-        card.add(lblOutlookStatus);
-        card.add(Box.createVerticalStrut(6));
-        card.add(lblOutlookIdentity);
-        card.add(Box.createVerticalStrut(6));
-        card.add(lblOutlookLastSync);
-        card.add(Box.createVerticalStrut(18));
-        card.add(btnBar);
-        card.add(Box.createVerticalGlue());
+        card.add(topSection, BorderLayout.NORTH);
+        card.add(statusBox, BorderLayout.CENTER);
+        card.add(btnBar, BorderLayout.SOUTH);
 
         return card;
-    }
-
-    /**
-     * Modal dialog allowing user to configure Google OAuth credentials directly inside the GUI.
-     */
-    public void showGmailConfigDialog() {
-        JDialog dialog = new JDialog((Frame) SwingUtilities.getWindowAncestor(this), "Configure Google Gmail OAuth 2.0 Credentials", true);
-        dialog.setSize(580, 360);
-        dialog.setLocationRelativeTo(this);
-        dialog.setLayout(new BorderLayout(16, 16));
-        dialog.getContentPane().setBackground(UiTheme.BG_DARK);
-
-        JPanel content = new JPanel();
-        content.setLayout(new BoxLayout(content, BoxLayout.Y_AXIS));
-        content.setBorder(new EmptyBorder(16, 20, 16, 20));
-        content.setOpaque(false);
-
-        JLabel info = new JLabel("<html><strong>Configure Google Cloud Credentials (In-App GUI Mode):</strong><br/>" +
-                "1. Create a project in Google Cloud Console &rarr; Enable 'Gmail API'.<br/>" +
-                "2. Create Credentials &rarr; OAuth client ID &rarr; Desktop Application.<br/>" +
-                "3. Paste your Client ID and Client Secret below. Changes save directly to .env.</html>");
-        info.setFont(UiTheme.FONT_SMALL);
-        info.setForeground(UiTheme.TEXT_MUTED);
-        content.add(info);
-        content.add(Box.createVerticalStrut(16));
-
-        JPanel form = new JPanel(new GridLayout(3, 2, 10, 10));
-        form.setOpaque(false);
-
-        JTextField txtClientId = new JTextField(appConfig.getGmailClientId());
-        txtClientId.setFont(UiTheme.FONT_MONO);
-
-        JPasswordField txtSecret = new JPasswordField(appConfig.getGmailClientSecret());
-        txtSecret.setFont(UiTheme.FONT_MONO);
-
-        JTextField txtPort = new JTextField(String.valueOf(appConfig.getGmailRedirectPort()));
-        txtPort.setFont(UiTheme.FONT_MONO);
-
-        form.add(new JLabel("Google Client ID:"));
-        form.add(txtClientId);
-        form.add(new JLabel("Google Client Secret:"));
-        form.add(txtSecret);
-        form.add(new JLabel("Loopback Redirect Port:"));
-        form.add(txtPort);
-
-        content.add(form);
-        content.add(Box.createVerticalStrut(10));
-
-        JCheckBox chkShowSecret = new JCheckBox("Show Client Secret in Plaintext");
-        chkShowSecret.setOpaque(false);
-        chkShowSecret.addActionListener(e -> {
-            if (chkShowSecret.isSelected()) {
-                txtSecret.setEchoChar((char) 0);
-            } else {
-                txtSecret.setEchoChar('•');
-            }
-        });
-        content.add(chkShowSecret);
-
-        JPanel btnPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 10));
-        btnPanel.setOpaque(false);
-
-        JButton btnCancel = UiTheme.createStyledButton("Cancel", UiTheme.CARD_BG);
-        btnCancel.addActionListener(e -> dialog.dispose());
-
-        JButton btnSave = UiTheme.createStyledButton("Save & Apply Credentials", UiTheme.ACCENT_BLUE);
-        btnSave.addActionListener(e -> {
-            String cId = txtClientId.getText().trim();
-            String cSec = new String(txtSecret.getPassword()).trim();
-            int port = 8888;
-            try {
-                port = Integer.parseInt(txtPort.getText().trim());
-            } catch (Exception ignored) {}
-
-            if (cId.isBlank() || cSec.isBlank()) {
-                JOptionPane.showMessageDialog(dialog, "Please provide both Client ID and Client Secret.", "Input Required", JOptionPane.WARNING_MESSAGE);
-                return;
-            }
-
-            try {
-                appConfig.saveCredentials(cId, cSec, port,
-                        appConfig.getOutlookClientId(), appConfig.getOutlookTenantId(), appConfig.getVirusTotalApiKey());
-
-                EmailProvider p = providers.get(ProviderType.GMAIL);
-                if (p instanceof GmailProvider gp) {
-                    gp.setCredentials(cId, cSec, port);
-                }
-
-                dialog.dispose();
-                refreshStatus();
-
-                JOptionPane.showMessageDialog(ConnectedInboxesPanel.this,
-                        "✓ Google Gmail credentials successfully saved & applied!\n\n" +
-                        "Client ID: " + (cId.length() > 20 ? cId.substring(0, 15) + "..." + cId.substring(cId.length() - 10) : cId) + "\n" +
-                        "Redirect Port: " + port + "\n\n" +
-                        "You can now click 'Connect Gmail' to authorize your mailbox in your browser.",
-                        "Credentials Saved", JOptionPane.INFORMATION_MESSAGE);
-
-            } catch (Exception ex) {
-                JOptionPane.showMessageDialog(dialog, "Failed to save configuration: " + ex.getMessage(), "Save Error", JOptionPane.ERROR_MESSAGE);
-            }
-        });
-
-        btnPanel.add(btnCancel);
-        btnPanel.add(btnSave);
-
-        dialog.add(content, BorderLayout.CENTER);
-        dialog.add(btnPanel, BorderLayout.SOUTH);
-        dialog.setVisible(true);
-    }
-
-    /**
-     * Modal dialog allowing user to configure Microsoft Outlook credentials directly inside the GUI.
-     */
-    public void showOutlookConfigDialog() {
-        JDialog dialog = new JDialog((Frame) SwingUtilities.getWindowAncestor(this), "Configure Microsoft 365 / Entra Credentials", true);
-        dialog.setSize(560, 320);
-        dialog.setLocationRelativeTo(this);
-        dialog.setLayout(new BorderLayout(16, 16));
-        dialog.getContentPane().setBackground(UiTheme.BG_DARK);
-
-        JPanel content = new JPanel();
-        content.setLayout(new BoxLayout(content, BoxLayout.Y_AXIS));
-        content.setBorder(new EmptyBorder(16, 20, 16, 20));
-        content.setOpaque(false);
-
-        JLabel info = new JLabel("<html><strong>Configure Microsoft Entra ID (In-App GUI Mode):</strong><br/>" +
-                "1. Register an Application in Microsoft Entra admin center.<br/>" +
-                "2. Supported account types: Personal Microsoft accounts or Any organizational directory.<br/>" +
-                "3. API Permissions: Delegated 'Mail.Read'.<br/>" +
-                "4. Paste your Application (Client) ID below.</html>");
-        info.setFont(UiTheme.FONT_SMALL);
-        info.setForeground(UiTheme.TEXT_MUTED);
-        content.add(info);
-        content.add(Box.createVerticalStrut(16));
-
-        JPanel form = new JPanel(new GridLayout(2, 2, 10, 10));
-        form.setOpaque(false);
-
-        JTextField txtClientId = new JTextField(appConfig.getOutlookClientId());
-        txtClientId.setFont(UiTheme.FONT_MONO);
-
-        JTextField txtTenantId = new JTextField(appConfig.getOutlookTenantId());
-        txtTenantId.setFont(UiTheme.FONT_MONO);
-
-        form.add(new JLabel("Application (Client) ID:"));
-        form.add(txtClientId);
-        form.add(new JLabel("Directory (Tenant) ID:"));
-        form.add(txtTenantId);
-
-        content.add(form);
-
-        JPanel btnPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 10));
-        btnPanel.setOpaque(false);
-
-        JButton btnCancel = UiTheme.createStyledButton("Cancel", UiTheme.CARD_BG);
-        btnCancel.addActionListener(e -> dialog.dispose());
-
-        JButton btnSave = UiTheme.createStyledButton("Save & Apply Credentials", UiTheme.ACCENT_BLUE);
-        btnSave.addActionListener(e -> {
-            String cId = txtClientId.getText().trim();
-            String tId = txtTenantId.getText().trim();
-            if (tId.isBlank()) tId = "common";
-
-            if (cId.isBlank()) {
-                JOptionPane.showMessageDialog(dialog, "Please enter your Microsoft Application (Client) ID.", "Input Required", JOptionPane.WARNING_MESSAGE);
-                return;
-            }
-
-            try {
-                appConfig.saveCredentials(appConfig.getGmailClientId(), appConfig.getGmailClientSecret(),
-                        appConfig.getGmailRedirectPort(), cId, tId, appConfig.getVirusTotalApiKey());
-
-                EmailProvider p = providers.get(ProviderType.OUTLOOK);
-                if (p instanceof OutlookProvider op) {
-                    op.setCredentials(cId, tId);
-                }
-
-                dialog.dispose();
-                refreshStatus();
-
-                JOptionPane.showMessageDialog(ConnectedInboxesPanel.this,
-                        "✓ Microsoft Entra credentials successfully saved & applied!\n\n" +
-                        "Client ID: " + cId + "\n" +
-                        "Tenant ID: " + tId + "\n\n" +
-                        "You can now click 'Connect Outlook' to authorize your mailbox.",
-                        "Credentials Saved", JOptionPane.INFORMATION_MESSAGE);
-
-            } catch (Exception ex) {
-                JOptionPane.showMessageDialog(dialog, "Failed to save configuration: " + ex.getMessage(), "Save Error", JOptionPane.ERROR_MESSAGE);
-            }
-        });
-
-        btnPanel.add(btnCancel);
-        btnPanel.add(btnSave);
-
-        dialog.add(content, BorderLayout.CENTER);
-        dialog.add(btnPanel, BorderLayout.SOUTH);
-        dialog.setVisible(true);
     }
 
     private void connectGmail() {
         EmailProvider provider = providers.get(ProviderType.GMAIL);
         if (provider instanceof GmailProvider gp) {
-            if (!gp.hasStoredCredentials()) {
-                int opt = JOptionPane.showConfirmDialog(this,
-                        "Google Client ID & Secret are not yet configured.\n\n" +
-                        "Would you like to configure your Google OAuth credentials now?",
-                        "Configuration Required", JOptionPane.YES_NO_OPTION, JOptionPane.QUESTION_MESSAGE);
-                if (opt == JOptionPane.YES_OPTION) {
-                    showGmailConfigDialog();
-                }
-                return;
-            }
-
-            // Provide immediate user feedback that authorization is beginning
-            lblGmailStatus.setText("Session: Opening Web Browser for OAuth Sign-In...");
+            lblGmailStatus.setText("Status: Opening web browser for Google sign-in...");
             lblGmailStatus.setForeground(UiTheme.ACCENT_CYAN);
 
             JDialog waitDialog = new JDialog((Frame) SwingUtilities.getWindowAncestor(this), "Connecting Google Gmail...", false);
@@ -504,7 +381,7 @@ public class ConnectedInboxesPanel extends JPanel {
             JPanel p = new JPanel(new BorderLayout(12, 12));
             p.setBackground(UiTheme.BG_DARK);
             p.setBorder(new EmptyBorder(16, 20, 16, 20));
-            JLabel lblMsg = new JLabel("<html><strong>Waiting for Google Sign-In...</strong><br/>Please complete the OAuth consent screen in your web browser.</html>");
+            JLabel lblMsg = new JLabel("<html><strong>Opening Google Sign-In...</strong><br/>Please select your account and authorize MailShield in your web browser.</html>");
             lblMsg.setFont(UiTheme.FONT_REGULAR);
             JProgressBar pb = new JProgressBar();
             pb.setIndeterminate(true);
@@ -525,32 +402,26 @@ public class ConnectedInboxesPanel extends JPanel {
                     try {
                         boolean success = get();
                         refreshStatus();
+                        if (onAccountChanged != null) onAccountChanged.run();
 
                         if (success) {
                             JOptionPane.showMessageDialog(ConnectedInboxesPanel.this,
-                                    "✓ Google Gmail Connected Successfully!\n\n" +
+                                    "✓ Google Gmail Account Connected Successfully!\n\n" +
                                     "Authorized Mailbox: " + gp.getStatus().getAccountEmail() + "\n" +
-                                    "OAuth Status: " + gp.getStatus().getSyncStatus() + "\n" +
-                                    "Permissions: Read-Only Email Inspection (gmail.readonly)\n\n" +
-                                    "Your inbox is connected. Click 'Sync (10 Msgs)' to ingest and inspect your emails.",
+                                    "Security Scope: Read-Only (gmail.readonly)\n\n" +
+                                    "MailShield is now monitoring your inbox for security threats.",
                                     "Google Gmail Connected", JOptionPane.INFORMATION_MESSAGE);
                         } else {
                             String err = gp.getLastErrorMessage();
-                            if (err == null || err.isBlank()) err = "Authorization was cancelled or did not complete.";
+                            if (err == null || err.isBlank()) err = "Authorization was cancelled or rejected by user.";
                             JOptionPane.showMessageDialog(ConnectedInboxesPanel.this,
-                                    "Google Gmail Authorization Did Not Complete:\n\n" +
-                                    err + "\n\n" +
-                                    "Troubleshooting Checklist:\n" +
-                                    "1. Did you grant permissions in the browser window that opened?\n" +
-                                    "2. Is 'Gmail API' enabled in your Google Cloud Console project?\n" +
-                                    "3. If your OAuth app status is 'Testing', is your email in 'Test Users'?\n" +
-                                    "4. Verify your Client ID and Client Secret via the 'Configure' button.",
-                                    "Authentication Failed", JOptionPane.ERROR_MESSAGE);
+                                    "Google Gmail Connection Notice:\n\n" + err,
+                                    "Connection Incomplete", JOptionPane.WARNING_MESSAGE);
                         }
                     } catch (Exception ex) {
                         refreshStatus();
                         JOptionPane.showMessageDialog(ConnectedInboxesPanel.this,
-                                "Error during OAuth flow: " + ex.getMessage(),
+                                "Error during Google OAuth flow: " + ex.getMessage(),
                                 "Authentication Exception", JOptionPane.ERROR_MESSAGE);
                     }
                 }
@@ -562,19 +433,23 @@ public class ConnectedInboxesPanel extends JPanel {
     private void connectOutlook() {
         EmailProvider provider = providers.get(ProviderType.OUTLOOK);
         if (provider instanceof OutlookProvider op) {
-            if (!op.hasStoredCredentials()) {
-                int opt = JOptionPane.showConfirmDialog(this,
-                        "Microsoft Entra Application (Client) ID is not yet configured.\n\n" +
-                        "Would you like to configure your Microsoft credentials now?",
-                        "Configuration Required", JOptionPane.YES_NO_OPTION, JOptionPane.QUESTION_MESSAGE);
-                if (opt == JOptionPane.YES_OPTION) {
-                    showOutlookConfigDialog();
-                }
-                return;
-            }
-
-            lblOutlookStatus.setText("Session: Initiating Microsoft Entra Device Sign-In...");
+            lblOutlookStatus.setText("Status: Opening web browser for Microsoft sign-in...");
             lblOutlookStatus.setForeground(UiTheme.ACCENT_CYAN);
+
+            JDialog waitDialog = new JDialog((Frame) SwingUtilities.getWindowAncestor(this), "Connecting Microsoft Outlook...", false);
+            waitDialog.setSize(440, 140);
+            waitDialog.setLocationRelativeTo(this);
+            JPanel p = new JPanel(new BorderLayout(12, 12));
+            p.setBackground(UiTheme.BG_DARK);
+            p.setBorder(new EmptyBorder(16, 20, 16, 20));
+            JLabel lblMsg = new JLabel("<html><strong>Opening Microsoft Sign-In...</strong><br/>Please sign in and authorize MailShield in your web browser.</html>");
+            lblMsg.setFont(UiTheme.FONT_REGULAR);
+            JProgressBar pb = new JProgressBar();
+            pb.setIndeterminate(true);
+            p.add(lblMsg, BorderLayout.CENTER);
+            p.add(pb, BorderLayout.SOUTH);
+            waitDialog.setContentPane(p);
+            waitDialog.setVisible(true);
 
             SwingWorker<Boolean, Void> worker = new SwingWorker<>() {
                 @Override
@@ -584,34 +459,30 @@ public class ConnectedInboxesPanel extends JPanel {
 
                 @Override
                 protected void done() {
+                    waitDialog.dispose();
                     try {
                         boolean success = get();
                         refreshStatus();
+                        if (onAccountChanged != null) onAccountChanged.run();
 
                         if (success) {
                             JOptionPane.showMessageDialog(ConnectedInboxesPanel.this,
                                     "✓ Microsoft Outlook / 365 Connected Successfully!\n\n" +
                                     "Authorized Mailbox: " + op.getStatus().getAccountEmail() + "\n" +
-                                    "OAuth Status: " + op.getStatus().getSyncStatus() + "\n" +
-                                    "Permissions: Read-Only Email Inspection (Mail.Read)\n\n" +
-                                    "Your inbox is connected. Click 'Sync (10 Msgs)' to ingest emails.",
-                                    "Microsoft 365 Connected", JOptionPane.INFORMATION_MESSAGE);
+                                    "Security Scope: Read-Only (Mail.Read)\n\n" +
+                                    "MailShield is now monitoring your inbox for security threats.",
+                                    "Microsoft Outlook Connected", JOptionPane.INFORMATION_MESSAGE);
                         } else {
                             String err = op.getLastErrorMessage();
-                            if (err == null || err.isBlank()) err = "Authorization was cancelled or did not complete.";
+                            if (err == null || err.isBlank()) err = "Authorization was cancelled or loopback timed out.";
                             JOptionPane.showMessageDialog(ConnectedInboxesPanel.this,
-                                    "Microsoft Outlook Authorization Did Not Complete:\n\n" +
-                                    err + "\n\n" +
-                                    "Troubleshooting Checklist:\n" +
-                                    "1. Follow the device login prompt instructions printed in console.\n" +
-                                    "2. Ensure 'Mail.Read' delegated permission is granted in Microsoft Entra.\n" +
-                                    "3. Verify your Client ID in 'Configure' button.",
-                                    "Authentication Failed", JOptionPane.ERROR_MESSAGE);
+                                    "Microsoft Outlook Connection Notice:\n\n" + err,
+                                    "Connection Incomplete", JOptionPane.WARNING_MESSAGE);
                         }
                     } catch (Exception ex) {
                         refreshStatus();
                         JOptionPane.showMessageDialog(ConnectedInboxesPanel.this,
-                                "Error during Microsoft Entra flow: " + ex.getMessage(),
+                                "Error during Microsoft OAuth flow: " + ex.getMessage(),
                                 "Authentication Exception", JOptionPane.ERROR_MESSAGE);
                     }
                 }
@@ -620,97 +491,117 @@ public class ConnectedInboxesPanel extends JPanel {
         }
     }
 
-    private void disconnectProvider(ProviderType type) {
-        EmailProvider p = providers.get(type);
-        if (p != null) {
-            int opt = JOptionPane.showConfirmDialog(this,
-                    "Are you sure you want to disconnect " + type.getTitle() + "?\nStored session tokens will be purged.",
-                    "Confirm Disconnect", JOptionPane.YES_NO_OPTION);
-            if (opt == JOptionPane.YES_OPTION) {
-                p.disconnect();
-                refreshStatus();
-                JOptionPane.showMessageDialog(this, type.getTitle() + " has been disconnected.", "Disconnected", JOptionPane.INFORMATION_MESSAGE);
-            }
-        }
-    }
-
-    private void syncProvider(ProviderType type) {
-        EmailProvider p = providers.get(type);
-        if (p == null || !p.getStatus().isConnected()) {
+    private void syncProvider(ProviderType providerType) {
+        if (monitoringService == null) return;
+        EmailProvider provider = providers.get(providerType);
+        if (provider == null || !provider.getStatus().isConnected()) {
             JOptionPane.showMessageDialog(this,
-                    type.getTitle() + " is not authorized. Please connect your account first.",
-                    "Sync Unavailable", JOptionPane.WARNING_MESSAGE);
+                    "Provider " + providerType.getTitle() + " is not connected yet.",
+                    "Not Connected", JOptionPane.INFORMATION_MESSAGE);
             return;
         }
 
         SwingWorker<Integer, Void> worker = new SwingWorker<>() {
             @Override
             protected Integer doInBackground() {
-                if (monitoringService != null) {
-                    monitoringService.setActiveProvider(type);
-                    return monitoringService.triggerOnDemandSync(10);
-                }
-                return 0;
+                return monitoringService.triggerSyncAllConnected(25);
             }
 
             @Override
             protected void done() {
                 try {
                     int count = get();
-                    JOptionPane.showMessageDialog(ConnectedInboxesPanel.this,
-                            "✓ Synchronization completed successfully!\n" +
-                            "Ingested and analyzed: " + count + " new messages from " + type.getTitle() + ".\n\n" +
-                            "Inspect results in 'Overview Dashboard' or 'Investigation Queue'.",
-                            "Sync Pass Complete", JOptionPane.INFORMATION_MESSAGE);
                     refreshStatus();
-                } catch (Exception ex) {
+                    if (onAccountChanged != null) onAccountChanged.run();
                     JOptionPane.showMessageDialog(ConnectedInboxesPanel.this,
-                            "Sync Error: " + ex.getMessage(), "Sync Failed", JOptionPane.ERROR_MESSAGE);
+                            "✓ Synchronized " + count + " new email(s) from " + providerType.getTitle() + "!",
+                            "Sync Complete", JOptionPane.INFORMATION_MESSAGE);
+                } catch (Exception e) {
+                    JOptionPane.showMessageDialog(ConnectedInboxesPanel.this,
+                            "Sync error: " + e.getMessage(), "Sync Error", JOptionPane.ERROR_MESSAGE);
                 }
             }
         };
         worker.execute();
     }
 
+    private void disconnectProvider(ProviderType providerType) {
+        int opt = JOptionPane.showConfirmDialog(this,
+                "Are you sure you want to disconnect " + providerType.getTitle() + "?\n\n" +
+                "This will revoke local session tokens and purge cached credentials from the AES-256 vault.",
+                "Disconnect Account", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
+        if (opt != JOptionPane.YES_OPTION) return;
+
+        EmailProvider provider = providers.get(providerType);
+        if (provider != null) {
+            provider.disconnect();
+            refreshStatus();
+            if (onAccountChanged != null) onAccountChanged.run();
+            JOptionPane.showMessageDialog(this,
+                    "✓ " + providerType.getTitle() + " has been safely disconnected.\n" +
+                    "Local session tokens have been securely wiped.",
+                    "Account Disconnected", JOptionPane.INFORMATION_MESSAGE);
+        }
+    }
+
     public void refreshStatus() {
-        EmailProvider gmail = providers.get(ProviderType.GMAIL);
-        if (gmail != null) {
-            ProviderConnectionStatus st = gmail.getStatus();
-            boolean configured = appConfig.isGmailConfigured() || (gmail instanceof GmailProvider gp && gp.hasStoredCredentials());
-            if (configured) {
-                String cId = appConfig.getGmailClientId();
-                String preview = cId.length() > 25 ? cId.substring(0, 12) + "..." + cId.substring(cId.length() - 10) : cId;
-                lblGmailCredStatus.setText("Credentials: ✓ Configured in GUI (" + preview + ")");
-                lblGmailCredStatus.setForeground(UiTheme.COLOR_LOW);
+        // Gmail Card Update
+        EmailProvider gp = providers.get(ProviderType.GMAIL);
+        if (gp != null) {
+            ProviderConnectionStatus status = gp.getStatus();
+            boolean connected = status.isConnected();
+
+            if (connected) {
+                lblGmailStatus.setText("<html>Status: <strong style='color:#4ade80;'>● Connected & Active</strong></html>");
+                lblGmailIdentity.setText("<html>Authorized Mailbox: <strong style='color:#38bdf8;'>" +
+                        (status.getAccountEmail() != null ? status.getAccountEmail() : "Google Account") + "</strong></html>");
+                btnGmailConnect.setVisible(false);
+                btnGmailSync.setVisible(true);
+                btnGmailDisconnect.setVisible(true);
             } else {
-                lblGmailCredStatus.setText("Credentials: ⚠ Not Configured (Click 'Configure')");
-                lblGmailCredStatus.setForeground(UiTheme.COLOR_MEDIUM);
+                lblGmailStatus.setText("<html>Status: <span style='color:#94a3b8;'>Disconnected (Not Signed In)</span></html>");
+                lblGmailIdentity.setText("Authorized Mailbox: Not connected");
+                btnGmailConnect.setVisible(true);
+                btnGmailSync.setVisible(false);
+                btnGmailDisconnect.setVisible(false);
             }
 
-            lblGmailStatus.setText("Session: " + (st.isConnected() ? "Connected (Active OAuth Session)" : st.getSyncStatus()));
-            lblGmailStatus.setForeground(st.isConnected() ? UiTheme.COLOR_LOW : UiTheme.TEXT_MUTED);
-            lblGmailIdentity.setText("Authorized Mailbox: " + (st.getAccountEmail().isBlank() ? "Not connected" : st.getAccountEmail()));
-            lblGmailLastSync.setText("Last Synchronized: " + (st.getLastSyncTime() != null ? TIME_FMT.format(st.getLastSyncTime()) : "Never"));
+            if (status.getLastSyncTime() != null) {
+                lblGmailLastSync.setText("Last Synchronized: " + TIME_FMT.format(status.getLastSyncTime()));
+            } else {
+                lblGmailLastSync.setText("Last Synchronized: Never");
+            }
         }
 
-        EmailProvider outlook = providers.get(ProviderType.OUTLOOK);
-        if (outlook != null) {
-            ProviderConnectionStatus st = outlook.getStatus();
-            boolean configured = appConfig.isOutlookConfigured() || (outlook instanceof OutlookProvider op && op.hasStoredCredentials());
-            if (configured) {
-                String cId = appConfig.getOutlookClientId();
-                String preview = cId.length() > 20 ? cId.substring(0, 8) + "..." + cId.substring(cId.length() - 8) : cId;
-                lblOutlookCredStatus.setText("Credentials: ✓ Configured in GUI (" + preview + ")");
-                lblOutlookCredStatus.setForeground(UiTheme.COLOR_LOW);
+        // Outlook Card Update
+        EmailProvider op = providers.get(ProviderType.OUTLOOK);
+        if (op != null) {
+            ProviderConnectionStatus status = op.getStatus();
+            boolean connected = status.isConnected();
+
+            if (connected) {
+                lblOutlookStatus.setText("<html>Status: <strong style='color:#4ade80;'>● Connected & Active</strong></html>");
+                lblOutlookIdentity.setText("<html>Authorized Mailbox: <strong style='color:#38bdf8;'>" +
+                        (status.getAccountEmail() != null ? status.getAccountEmail() : "Microsoft Account") + "</strong></html>");
+                btnOutlookConnect.setVisible(false);
+                btnOutlookSync.setVisible(true);
+                btnOutlookDisconnect.setVisible(true);
             } else {
-                lblOutlookCredStatus.setText("Credentials: ⚠ Not Configured (Click 'Configure')");
-                lblOutlookCredStatus.setForeground(UiTheme.COLOR_MEDIUM);
+                lblOutlookStatus.setText("<html>Status: <span style='color:#94a3b8;'>Disconnected (Not Signed In)</span></html>");
+                lblOutlookIdentity.setText("Authorized Mailbox: Not connected");
+                btnOutlookConnect.setVisible(true);
+                btnOutlookSync.setVisible(false);
+                btnOutlookDisconnect.setVisible(false);
             }
 
-            lblOutlookStatus.setText("Session: " + (st.isConnected() ? "Connected (Active Entra Session)" : st.getSyncStatus()));
-            lblOutlookStatus.setForeground(st.isConnected() ? UiTheme.COLOR_LOW : UiTheme.TEXT_MUTED);
-            lblOutlookIdentity.setText("Authorized Mailbox: " + (st.getAccountEmail().isBlank() ? "Not connected" : st.getAccountEmail()));
-            lblOutlookLastSync.setText("Last Synchronized: " + (st.getLastSyncTime() != null ? TIME_FMT.format(st.getLastSyncTime()) : "Never"));
+            if (status.getLastSyncTime() != null) {
+                lblOutlookLastSync.setText("Last Synchronized: " + TIME_FMT.format(status.getLastSyncTime()));
+            } else {
+                lblOutlookLastSync.setText("Last Synchronized: Never");
+            }
         }
+
+        revalidate();
+        repaint();
     }
 }

@@ -57,7 +57,62 @@ public class GoogleGmailProvider implements GmailProvider {
         this.clientId = appConfig.getGmailClientId();
         this.clientSecret = appConfig.getGmailClientSecret();
         this.redirectPort = appConfig.getGmailRedirectPort();
+        tryRestoreExistingSession();
         updateStatus();
+    }
+
+    public synchronized boolean tryRestoreExistingSession() {
+        if (!hasStoredCredentials()) return false;
+        File tokensDirectory = new File(appConfig.getDataDir(), "tokens/gmail");
+        File storedCred = new File(tokensDirectory, "StoredCredential");
+        if (!storedCred.exists() || storedCred.length() == 0) return false;
+
+        try {
+            NetHttpTransport httpTransport = GoogleNetHttpTransport.newTrustedTransport();
+            GsonFactory jsonFactory = GsonFactory.getDefaultInstance();
+
+            String clientSecretsJson = String.format(
+                    "{\"installed\":{\"client_id\":\"%s\",\"client_secret\":\"%s\",\"auth_uri\":\"https://accounts.google.com/o/oauth2/auth\",\"token_uri\":\"https://oauth2.googleapis.com/token\"}}",
+                    clientId, clientSecret
+            );
+            GoogleClientSecrets secrets = GoogleClientSecrets.load(jsonFactory, new StringReader(clientSecretsJson));
+            FileDataStoreFactory dataStoreFactory = new FileDataStoreFactory(tokensDirectory);
+            GoogleAuthorizationCodeFlow flow = new GoogleAuthorizationCodeFlow.Builder(
+                    httpTransport, jsonFactory, secrets, SCOPES)
+                    .setDataStoreFactory(dataStoreFactory)
+                    .setAccessType("offline")
+                    .build();
+
+            Credential credential = flow.loadCredential("user");
+            if (credential != null && credential.getRefreshToken() != null) {
+                log.info("Found stored Gmail session. Auto-restoring permanent connection...");
+                try {
+                    if (credential.getAccessToken() == null || (credential.getExpiresInSeconds() != null && credential.getExpiresInSeconds() < 60)) {
+                        credential.refreshToken();
+                    }
+                    Gmail testService = new Gmail.Builder(httpTransport, jsonFactory, credential)
+                            .setApplicationName(APPLICATION_NAME)
+                            .build();
+                    var profile = testService.users().getProfile("me").execute();
+                    this.gmailService = testService;
+                    String userEmail = profile.getEmailAddress();
+                    this.currentStatus = new ProviderConnectionStatus(
+                            ProviderType.GMAIL, true, userEmail, Instant.now(),
+                            "Connected (Authorized via Google OAuth2)", "", SCOPES, true
+                    );
+                    log.info("Permanent Gmail connection auto-restored for: {}", userEmail);
+                    return true;
+                } catch (TokenResponseException tre) {
+                    log.warn("Stored Gmail token expired or revoked ({}: {}). Purging.", tre.getStatusCode(), tre.getContent());
+                    purgeStoredTokens();
+                } catch (Exception ex) {
+                    log.warn("Stored Gmail token validation failed ({}). Keeping for retry.", ex.getMessage());
+                }
+            }
+        } catch (Exception e) {
+            log.info("Could not auto-restore Gmail session: {}", e.getMessage());
+        }
+        return false;
     }
 
     private void updateStatus() {
@@ -117,9 +172,14 @@ public class GoogleGmailProvider implements GmailProvider {
     public boolean authenticate() {
         this.lastErrorMessage = null;
         if (!hasStoredCredentials()) {
-            this.lastErrorMessage = "Client ID or Client Secret is missing. Please configure credentials in the GUI first.";
+            this.lastErrorMessage = "Google Gmail client credentials missing in .env configuration.";
             this.currentStatus = ProviderConnectionStatus.notConfigured(ProviderType.GMAIL);
             return false;
+        }
+
+        if (tryRestoreExistingSession()) {
+            log.info("Already authenticated with valid stored Gmail session.");
+            return true;
         }
 
         File tokensDirectory = new File(appConfig.getDataDir(), "tokens/gmail");

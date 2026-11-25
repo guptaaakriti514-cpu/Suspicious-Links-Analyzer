@@ -19,9 +19,9 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Screen 1: Executive SOC Overview Dashboard.
+ * Screen 1: Executive SOC Overview Dashboard & Onboarding.
  * Visualizes genuine persisted statistics, recent threat alerts, category breakdown,
- * and live inbox connection cards.
+ * live inbox connection status, and seamless 1-click account connection actions.
  */
 public class DashboardPanel extends JPanel {
 
@@ -31,6 +31,7 @@ public class DashboardPanel extends JPanel {
     private final CaseRepository caseRepository;
     private final Map<ProviderType, EmailProvider> providers;
     private final Runnable navigateToAnalyzeAction;
+    private final Runnable navigateToInboxesAction;
     private final MonitoringService monitoringService;
     private final ReportGenerator reportGenerator;
 
@@ -48,6 +49,13 @@ public class DashboardPanel extends JPanel {
     private JButton btnLoadMore;
     private JLabel lblEmailCount;
 
+    // Onboarding Hero Banner components
+    private JLabel lblBannerTitle;
+    private JLabel lblBannerSubtitle;
+    private JButton btnBannerGmail;
+    private JButton btnBannerOutlook;
+    private JButton btnBannerManage;
+
     // All analyses/emails loaded from DB (up to current display limit)
     private final List<AnalysisResult> currentRecentAnalyses = new ArrayList<>();
     private final List<EmailMessage>   currentRecentEmails   = new ArrayList<>();
@@ -58,12 +66,14 @@ public class DashboardPanel extends JPanel {
                           Map<ProviderType, EmailProvider> providers,
                           MonitoringService monitoringService,
                           ReportGenerator reportGenerator,
-                          Runnable navigateToAnalyze) {
+                          Runnable navigateToAnalyze,
+                          Runnable navigateToInboxes) {
         this.caseRepository = caseRepository;
         this.providers = providers;
         this.monitoringService = monitoringService;
         this.reportGenerator = reportGenerator;
         this.navigateToAnalyzeAction = navigateToAnalyze;
+        this.navigateToInboxesAction = navigateToInboxes;
 
         setLayout(new BorderLayout(16, 16));
         setBackground(UiTheme.BG_DARK);
@@ -77,12 +87,20 @@ public class DashboardPanel extends JPanel {
     public DashboardPanel(CaseRepository caseRepository,
                           Map<ProviderType, EmailProvider> providers,
                           MonitoringService monitoringService,
+                          ReportGenerator reportGenerator,
                           Runnable navigateToAnalyze) {
-        this(caseRepository, providers, monitoringService, null, navigateToAnalyze);
+        this(caseRepository, providers, monitoringService, reportGenerator, navigateToAnalyze, null);
+    }
+
+    public DashboardPanel(CaseRepository caseRepository,
+                          Map<ProviderType, EmailProvider> providers,
+                          MonitoringService monitoringService,
+                          Runnable navigateToAnalyze) {
+        this(caseRepository, providers, monitoringService, null, navigateToAnalyze, null);
     }
 
     public DashboardPanel(CaseRepository caseRepository, Map<ProviderType, EmailProvider> providers, Runnable navigateToAnalyze) {
-        this(caseRepository, providers, null, null, navigateToAnalyze);
+        this(caseRepository, providers, null, null, navigateToAnalyze, null);
     }
 
     private void initHeader() {
@@ -124,10 +142,18 @@ public class DashboardPanel extends JPanel {
     }
 
     private void initContent() {
-        JPanel centerPanel = new JPanel(new BorderLayout(0, 20));
+        JPanel centerPanel = new JPanel(new BorderLayout(0, 16));
         centerPanel.setOpaque(false);
 
-        // Top Row: 4 Metric Cards
+        // Top Section: Onboarding Hero Banner + 4 Metric Cards
+        JPanel topContainer = new JPanel();
+        topContainer.setLayout(new BoxLayout(topContainer, BoxLayout.Y_AXIS));
+        topContainer.setOpaque(false);
+
+        topContainer.add(createOnboardingBanner());
+        topContainer.add(Box.createVerticalStrut(14));
+
+        // Metric Cards Row
         JPanel metricsRow = new JPanel(new GridLayout(1, 4, 16, 0));
         metricsRow.setOpaque(false);
 
@@ -141,7 +167,8 @@ public class DashboardPanel extends JPanel {
         metricsRow.add(createMetricCard("Critical Threats", lblCritical, UiTheme.COLOR_CRITICAL));
         metricsRow.add(createMetricCard("Active Investigation Cases", lblOpenCases, UiTheme.ACCENT_CYAN));
 
-        centerPanel.add(metricsRow, BorderLayout.NORTH);
+        topContainer.add(metricsRow);
+        centerPanel.add(topContainer, BorderLayout.NORTH);
 
         // Middle Row: Inboxes & Recent Analyses Split
         JPanel midPanel = new JPanel(new BorderLayout(16, 0));
@@ -151,7 +178,7 @@ public class DashboardPanel extends JPanel {
         JPanel tableCard = UiTheme.createCardPanel();
         tableCard.setLayout(new BorderLayout(0, 10));
 
-        // ── Table header with title, hint, and row-count label
+        // Table header
         JPanel tblHeader = new JPanel(new BorderLayout(8, 0));
         tblHeader.setOpaque(false);
 
@@ -186,7 +213,6 @@ public class DashboardPanel extends JPanel {
         recentTable.setRowHeight(28);
         recentTable.setFont(UiTheme.FONT_REGULAR);
         recentTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
-        // Allow the table to fill the viewport so the scroll bar appears only when needed
         recentTable.setFillsViewportHeight(true);
         recentTable.getColumnModel().getColumn(0).setPreferredWidth(120);
         recentTable.getColumnModel().getColumn(1).setPreferredWidth(160);
@@ -204,7 +230,6 @@ public class DashboardPanel extends JPanel {
             }
         });
 
-        // Scrollable pane — always shows a vertical scrollbar so the user can scroll 50 rows
         JScrollPane scrollPane = new JScrollPane(recentTable,
                 JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED,
                 JScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED);
@@ -212,7 +237,7 @@ public class DashboardPanel extends JPanel {
         scrollPane.setBorder(BorderFactory.createLineBorder(UiTheme.BORDER_COLOR, 1));
         tableCard.add(scrollPane, BorderLayout.CENTER);
 
-        // ── "Load More" footer bar
+        // "Load More" footer bar
         JPanel footerBar = new JPanel(new FlowLayout(FlowLayout.CENTER, 12, 6));
         footerBar.setOpaque(false);
 
@@ -220,7 +245,7 @@ public class DashboardPanel extends JPanel {
         btnLoadMore.setBorder(BorderFactory.createLineBorder(UiTheme.ACCENT_CYAN, 1));
         btnLoadMore.setToolTipText("Load the next 50 emails from the database");
         btnLoadMore.addActionListener(e -> loadMoreEmails());
-        btnLoadMore.setVisible(false); // shown only when there are more rows
+        btnLoadMore.setVisible(false);
 
         footerBar.add(btnLoadMore);
         tableCard.add(footerBar, BorderLayout.SOUTH);
@@ -248,8 +273,7 @@ public class DashboardPanel extends JPanel {
         inboxesCard.add(createConnectorBox("Microsoft 365", lblOutlookStatus, "Entra Delegated (Mail.Read)"));
         inboxesCard.add(Box.createVerticalStrut(16));
 
-        // Note on sample data vs real data
-        JLabel lblNotice = new JLabel("<html><small style='color:#94a3b8;'><strong>Data Integrity:</strong> Metrics are generated solely from authentic database records and verifiable sample fixtures. Live threats are never fabricated.</small></html>");
+        JLabel lblNotice = new JLabel("<html><small style='color:#94a3b8;'><strong>Data Integrity:</strong> Metrics are generated solely from authentic database records and verifiable forensics. Live threats are never fabricated.</small></html>");
         inboxesCard.add(lblNotice);
 
         midPanel.add(tableCard, BorderLayout.CENTER);
@@ -257,6 +281,57 @@ public class DashboardPanel extends JPanel {
 
         centerPanel.add(midPanel, BorderLayout.CENTER);
         add(centerPanel, BorderLayout.CENTER);
+    }
+
+    private JPanel createOnboardingBanner() {
+        JPanel banner = UiTheme.createCardPanel();
+        banner.setLayout(new BorderLayout(16, 0));
+        banner.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(UiTheme.BORDER_COLOR, 1),
+                new EmptyBorder(12, 16, 12, 16)
+        ));
+
+        JPanel textSide = new JPanel(new GridLayout(2, 1, 0, 4));
+        textSide.setOpaque(false);
+
+        lblBannerTitle = new JLabel("Secure your inbox with MailShield.");
+        lblBannerTitle.setFont(UiTheme.FONT_HEADER);
+        lblBannerTitle.setForeground(UiTheme.ACCENT_CYAN);
+
+        lblBannerSubtitle = new JLabel("Connect your email account and let MailShield analyze suspicious messages, detect phishing attempts, and protect your digital identity.");
+        lblBannerSubtitle.setFont(UiTheme.FONT_SMALL);
+        lblBannerSubtitle.setForeground(UiTheme.TEXT_MUTED);
+
+        textSide.add(lblBannerTitle);
+        textSide.add(lblBannerSubtitle);
+
+        JPanel btnSide = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 0));
+        btnSide.setOpaque(false);
+
+        btnBannerGmail = UiTheme.createStyledButton("Connect Gmail", UiTheme.ACCENT_BLUE);
+        btnBannerGmail.addActionListener(e -> {
+            if (navigateToInboxesAction != null) navigateToInboxesAction.run();
+        });
+
+        btnBannerOutlook = UiTheme.createStyledButton("Connect Outlook", UiTheme.ACCENT_BLUE);
+        btnBannerOutlook.addActionListener(e -> {
+            if (navigateToInboxesAction != null) navigateToInboxesAction.run();
+        });
+
+        btnBannerManage = UiTheme.createStyledButton("Manage Inboxes / Sync", UiTheme.CARD_BG);
+        btnBannerManage.setBorder(BorderFactory.createLineBorder(UiTheme.ACCENT_CYAN, 1));
+        btnBannerManage.addActionListener(e -> {
+            if (navigateToInboxesAction != null) navigateToInboxesAction.run();
+        });
+        btnBannerManage.setVisible(false);
+
+        btnSide.add(btnBannerGmail);
+        btnSide.add(btnBannerOutlook);
+        btnSide.add(btnBannerManage);
+
+        banner.add(textSide, BorderLayout.CENTER);
+        banner.add(btnSide, BorderLayout.EAST);
+        return banner;
     }
 
     private JPanel createMetricCard(String title, JLabel valueLabel, Color valueColor) {
@@ -372,14 +447,12 @@ public class DashboardPanel extends JPanel {
         }
     }
 
-    /** Load the next batch of emails and append them to the table. */
     private void loadMoreEmails() {
         if (caseRepository == null) return;
         displayedCount += LOAD_MORE_STEP;
         populateTable(displayedCount);
     }
 
-    /** Fill the table with up to {@code limit} most-recent analyses and update footer. */
     private void populateTable(int limit) {
         recentTableModel.setRowCount(0);
         currentRecentAnalyses.clear();
@@ -410,7 +483,6 @@ public class DashboardPanel extends JPanel {
             lblEmailCount.setText("Showing " + showing + " of " + totalInDb + " emails");
         }
 
-        // Show "Load More" only when there are additional rows available
         if (btnLoadMore != null) {
             boolean hasMore = showing < totalInDb;
             btnLoadMore.setVisible(hasMore);
@@ -428,17 +500,21 @@ public class DashboardPanel extends JPanel {
             lblCritical.setText(String.valueOf(caseRepository.getCriticalEmailCount()));
             lblOpenCases.setText(String.valueOf(caseRepository.getOpenCaseCount()));
 
-            // Reset to initial page size on a full refresh
             displayedCount = INITIAL_LOAD;
             populateTable(displayedCount);
         }
 
-        // Check providers
+        // Check providers & update banners
+        boolean hasConnected = false;
+        StringBuilder connectedAccounts = new StringBuilder();
+
         if (providers != null) {
             EmailProvider gmail = providers.get(ProviderType.GMAIL);
             if (gmail != null) {
                 ProviderConnectionStatus st = gmail.getStatus();
                 if (st.isConnected()) {
+                    hasConnected = true;
+                    connectedAccounts.append("Gmail (").append(st.getAccountEmail()).append(") ");
                     lblGmailStatus.setText("Connected (" + st.getAccountEmail() + ")");
                     lblGmailStatus.setForeground(UiTheme.COLOR_LOW);
                 } else if (st.isConfigured()) {
@@ -454,6 +530,9 @@ public class DashboardPanel extends JPanel {
             if (outlook != null) {
                 ProviderConnectionStatus st = outlook.getStatus();
                 if (st.isConnected()) {
+                    hasConnected = true;
+                    if (connectedAccounts.length() > 0) connectedAccounts.append(" | ");
+                    connectedAccounts.append("Outlook (").append(st.getAccountEmail()).append(")");
                     lblOutlookStatus.setText("Connected (" + st.getAccountEmail() + ")");
                     lblOutlookStatus.setForeground(UiTheme.COLOR_LOW);
                 } else if (st.isConfigured()) {
@@ -465,6 +544,23 @@ public class DashboardPanel extends JPanel {
                 }
             }
         }
+
+        if (lblBannerTitle != null && lblBannerSubtitle != null) {
+            if (hasConnected) {
+                lblBannerTitle.setText("● Active Mailbox Protection: " + connectedAccounts);
+                lblBannerTitle.setForeground(UiTheme.COLOR_LOW);
+                lblBannerSubtitle.setText("Continuous digital forensics, zero-trust link verification, and phishing threat analysis active.");
+                if (btnBannerGmail != null) btnBannerGmail.setVisible(false);
+                if (btnBannerOutlook != null) btnBannerOutlook.setVisible(false);
+                if (btnBannerManage != null) btnBannerManage.setVisible(true);
+            } else {
+                lblBannerTitle.setText("Secure your inbox with MailShield.");
+                lblBannerTitle.setForeground(UiTheme.ACCENT_CYAN);
+                lblBannerSubtitle.setText("Connect your email account and let MailShield analyze suspicious messages, detect phishing attempts, and protect your digital identity.");
+                if (btnBannerGmail != null) btnBannerGmail.setVisible(true);
+                if (btnBannerOutlook != null) btnBannerOutlook.setVisible(true);
+                if (btnBannerManage != null) btnBannerManage.setVisible(false);
+            }
+        }
     }
 }
-

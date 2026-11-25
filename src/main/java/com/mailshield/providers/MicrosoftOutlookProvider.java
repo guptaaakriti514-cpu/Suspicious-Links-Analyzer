@@ -9,8 +9,9 @@ import com.mailshield.ingestion.EmailParser;
 import com.mailshield.model.EmailMessage;
 import com.mailshield.model.ProviderConnectionStatus;
 import com.mailshield.model.ProviderType;
+import com.mailshield.security.TokenManagementService;
+import com.mailshield.services.OutlookOAuthService;
 import com.mailshield.storage.CaseRepository;
-import com.microsoft.aad.msal4j.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -25,7 +26,8 @@ import java.util.*;
 
 /**
  * Official Microsoft Graph API & Outlook/365 integration using MSAL Java.
- * Uses delegated authentication with the minimum required scope: Mail.Read.
+ * Uses official delegated OAuth 2.0 PKCE authentication with minimum scope: Mail.Read + User.Read.
+ * Seamless 1-click browser sign-in with automatic token refresh and encrypted token storage.
  * Never requests or collects Microsoft user passwords.
  */
 public class MicrosoftOutlookProvider implements OutlookProvider {
@@ -37,21 +39,22 @@ public class MicrosoftOutlookProvider implements OutlookProvider {
     private final EmailParser emailParser;
     private final CaseRepository caseRepository;
     private final AppConfig appConfig;
+    private final OutlookOAuthService oauthService;
     private HttpClient httpClient;
     private final Gson gson = new Gson();
 
-    private String clientId;
-    private String tenantId;
-    private IAuthenticationResult authResult;
     private ProviderConnectionStatus currentStatus;
     private String lastErrorMessage;
 
     public MicrosoftOutlookProvider(EmailParser emailParser, CaseRepository caseRepository, AppConfig appConfig) {
+        this(emailParser, caseRepository, appConfig, new OutlookOAuthService(appConfig, new TokenManagementService(appConfig.getDataDir())));
+    }
+
+    public MicrosoftOutlookProvider(EmailParser emailParser, CaseRepository caseRepository, AppConfig appConfig, OutlookOAuthService oauthService) {
         this.emailParser = emailParser;
         this.caseRepository = caseRepository;
         this.appConfig = appConfig;
-        this.clientId = appConfig.getOutlookClientId();
-        this.tenantId = appConfig.getOutlookTenantId();
+        this.oauthService = oauthService;
         updateStatus();
     }
 
@@ -71,10 +74,15 @@ public class MicrosoftOutlookProvider implements OutlookProvider {
     private void updateStatus() {
         if (!hasStoredCredentials()) {
             this.currentStatus = ProviderConnectionStatus.notConfigured(ProviderType.OUTLOOK);
-        } else if (authResult == null) {
+        } else if (oauthService.isConnected()) {
+            this.currentStatus = new ProviderConnectionStatus(
+                    ProviderType.OUTLOOK, true, oauthService.getConnectedEmail(),
+                    Instant.now(), "Connected (Authorized via Microsoft Entra)", "", new ArrayList<>(SCOPES), true
+            );
+        } else {
             this.currentStatus = new ProviderConnectionStatus(
                     ProviderType.OUTLOOK, false, "Ready to Connect",
-                    null, "Credentials Configured (Awaiting Sign-In)", "", new ArrayList<>(SCOPES), true
+                    null, "OAuth Configured (Click 'Connect Outlook' to authorize)", "", new ArrayList<>(SCOPES), true
             );
         }
     }
@@ -86,6 +94,9 @@ public class MicrosoftOutlookProvider implements OutlookProvider {
 
     @Override
     public ProviderConnectionStatus getStatus() {
+        if (oauthService.isConnected() && !currentStatus.isConnected()) {
+            updateStatus();
+        }
         return currentStatus;
     }
 
@@ -96,25 +107,27 @@ public class MicrosoftOutlookProvider implements OutlookProvider {
 
     @Override
     public void setCredentials(String clientId, String tenantId) {
-        this.clientId = clientId;
-        this.tenantId = tenantId;
+        // Maintained for interface compatibility; platform settings managed via AppConfig / .env
         updateStatus();
     }
 
     @Override
     public boolean hasStoredCredentials() {
-        return clientId != null && !clientId.isBlank() && !clientId.contains("your-microsoft");
+        return oauthService.isPlatformConfigured();
     }
 
     @Override
     public boolean testConnection() {
-        if (!hasStoredCredentials() || authResult == null) return false;
+        if (!hasStoredCredentials() || !oauthService.isConnected()) return false;
         try {
             HttpClient client = getHttpClient();
             if (client == null) return false;
+            Optional<String> tokenOpt = oauthService.getValidAccessToken();
+            if (tokenOpt.isEmpty()) return false;
+
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(GRAPH_ENDPOINT + "/me"))
-                    .header("Authorization", "Bearer " + authResult.accessToken())
+                    .header("Authorization", "Bearer " + tokenOpt.get())
                     .GET()
                     .build();
             HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
@@ -128,44 +141,28 @@ public class MicrosoftOutlookProvider implements OutlookProvider {
     @Override
     public boolean authenticate() {
         if (!hasStoredCredentials()) {
+            this.lastErrorMessage = "Microsoft Outlook integration requires a Microsoft Entra App registration. Please set MAILSHIELD_OUTLOOK_CLIENT_ID in your .env configuration.";
             this.currentStatus = ProviderConnectionStatus.notConfigured(ProviderType.OUTLOOK);
             return false;
         }
 
         try {
-            String authority = "https://login.microsoftonline.com/" + (tenantId != null ? tenantId : "common");
-            PublicClientApplication pca = PublicClientApplication.builder(clientId)
-                    .authority(authority)
-                    .build();
-
-            // Use Device Code Flow (Ideal for desktop CLI and non-browser apps without needing local open ports)
-            DeviceCodeFlowParameters parameters = DeviceCodeFlowParameters.builder(
-                    SCOPES,
-                    deviceCode -> {
-                        log.info("Microsoft Sign-In Device Flow: {}", deviceCode.message());
-                        System.out.println("\n=======================================================");
-                        System.out.println("MICROSOFT OUTLOOK AUTHENTICATION REQUIRED:");
-                        System.out.println(deviceCode.message());
-                        System.out.println("=======================================================\n");
-                    }
-            ).build();
-
-            this.authResult = pca.acquireToken(parameters).join();
-            String accountUsername = authResult.account() != null ? authResult.account().username() : "Microsoft 365 User";
+            // Interactive 1-click browser flow with PKCE
+            oauthService.authenticateInteractive();
+            String accountEmail = oauthService.getConnectedEmail();
 
             this.currentStatus = new ProviderConnectionStatus(
-                    ProviderType.OUTLOOK, true, accountUsername, Instant.now(),
+                    ProviderType.OUTLOOK, true, accountEmail, Instant.now(),
                     "Connected (Authorized via Microsoft Entra)", "", new ArrayList<>(SCOPES), true
             );
-            log.info("Microsoft Graph successfully authorized for: {}", accountUsername);
+            log.info("Microsoft Graph successfully authorized for: {}", accountEmail);
             return true;
-
         } catch (Exception e) {
             this.lastErrorMessage = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
             log.error("Microsoft Entra authentication failed: {}", e.getMessage(), e);
             this.currentStatus = new ProviderConnectionStatus(
                     ProviderType.OUTLOOK, false, "Authorization Failed", null,
-                    "MSAL Error: " + this.lastErrorMessage, this.lastErrorMessage, new ArrayList<>(SCOPES), true
+                    "Authentication error: " + this.lastErrorMessage, this.lastErrorMessage, new ArrayList<>(SCOPES), true
             );
             return false;
         }
@@ -173,16 +170,18 @@ public class MicrosoftOutlookProvider implements OutlookProvider {
 
     @Override
     public void disconnect() {
-        this.authResult = null;
+        oauthService.disconnect();
         this.currentStatus = ProviderConnectionStatus.disconnected(ProviderType.OUTLOOK, "Not Signed In");
         log.info("Microsoft Outlook connection disconnected.");
     }
 
     @Override
     public List<EmailMessage> fetchRecentMessages(int maxMessages) throws ProviderException {
-        if (authResult == null) {
+        Optional<String> tokenOpt = oauthService.getValidAccessToken();
+        if (tokenOpt.isEmpty()) {
             throw new ProviderException("Microsoft Outlook provider is not authenticated. Please sign in via Microsoft Entra.");
         }
+        String accessToken = tokenOpt.get();
 
         List<EmailMessage> resultList = new ArrayList<>();
         try {
@@ -195,7 +194,7 @@ public class MicrosoftOutlookProvider implements OutlookProvider {
             String listUrl = String.format("%s/me/mailFolders/inbox/messages?$top=%d&$select=id,subject", GRAPH_ENDPOINT, limit);
             HttpRequest listRequest = HttpRequest.newBuilder()
                     .uri(URI.create(listUrl))
-                    .header("Authorization", "Bearer " + authResult.accessToken())
+                    .header("Authorization", "Bearer " + accessToken)
                     .GET()
                     .build();
 
@@ -222,10 +221,10 @@ public class MicrosoftOutlookProvider implements OutlookProvider {
                 // 2. Fetch full raw RFC 822 MIME bytes from Graph API endpoint: /me/messages/{id}/$value
                 String rawMimeUrl = String.format("%s/me/messages/%s/$value", GRAPH_ENDPOINT, messageId);
                 HttpRequest rawRequest = HttpRequest.newBuilder()
-                        .uri(URI.create(rawMimeUrl))
-                        .header("Authorization", "Bearer " + authResult.accessToken())
-                        .GET()
-                        .build();
+                    .uri(URI.create(rawMimeUrl))
+                    .header("Authorization", "Bearer " + accessToken)
+                    .GET()
+                    .build();
 
                 HttpResponse<byte[]> rawResponse = client.send(rawRequest, HttpResponse.BodyHandlers.ofByteArray());
                 if (rawResponse.statusCode() == 200) {
@@ -269,7 +268,7 @@ public class MicrosoftOutlookProvider implements OutlookProvider {
             }
 
             this.currentStatus = new ProviderConnectionStatus(
-                    ProviderType.OUTLOOK, true, currentStatus.getAccountEmail(),
+                    ProviderType.OUTLOOK, true, oauthService.getConnectedEmail(),
                     Instant.now(), "Sync Completed (" + resultList.size() + " new messages)",
                     "", new ArrayList<>(SCOPES), true
             );

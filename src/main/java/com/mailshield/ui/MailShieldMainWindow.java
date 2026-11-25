@@ -46,6 +46,9 @@ public class MailShieldMainWindow extends JFrame {
     private JLabel lblStatusProvider;
     private JLabel lblStatusMonitoring;
 
+    private final Map<ProviderType, EmailProvider> providers;
+    private JButton btnTopLogout;
+
     public MailShieldMainWindow(AppConfig appConfig,
                                 EmailParser emailParser,
                                 DetectionEngine detectionEngine,
@@ -59,6 +62,7 @@ public class MailShieldMainWindow extends JFrame {
         super("MAILSHIELD — Advanced Email Threat Detection & Digital Forensics Platform v1.0.0");
         this.caseRepository = caseRepository;
         this.monitoringService = monitoringService;
+        this.providers = providers;
 
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         setSize(1280, 820);
@@ -68,9 +72,14 @@ public class MailShieldMainWindow extends JFrame {
         UiTheme.setupFlatLaf();
 
         // Initialize 10 Screens
-        this.dashboardPanel = new DashboardPanel(caseRepository, providers, monitoringService, reportGenerator, () -> switchScreen("ANALYZE"));
+        this.dashboardPanel = new DashboardPanel(caseRepository, providers, monitoringService, reportGenerator,
+                () -> switchScreen("ANALYZE"),
+                () -> switchScreen("INBOXES"));
         this.analyzePanel = new AnalyzeEmailPanel(emailParser, detectionEngine, caseRepository, evidenceManager, reportGenerator);
-        this.inboxesPanel = new ConnectedInboxesPanel(providers, monitoringService, appConfig);
+        this.inboxesPanel = new ConnectedInboxesPanel(providers, monitoringService, appConfig, () -> {
+            if (dashboardPanel != null) dashboardPanel.refreshData();
+            updateTopBarAccountStatus();
+        });
         this.queuePanel = new InvestigationQueuePanel(caseRepository, monitoringService, reportGenerator);
         this.urlPanel = new UrlDomainAnalysisPanel(detectionEngine.getThreatIntelService());
         this.casesPanel = new CasesPanel(caseRepository);
@@ -79,6 +88,7 @@ public class MailShieldMainWindow extends JFrame {
         this.settingsPanel = new SettingsSecurityPanel(appConfig, credentialStore, providers, () -> {
             inboxesPanel.refreshStatus();
             dashboardPanel.refreshData();
+            updateTopBarAccountStatus();
         });
         this.aboutPanel = new AboutHelpPanel();
 
@@ -107,6 +117,7 @@ public class MailShieldMainWindow extends JFrame {
         root.add(createStatusBar(monitoringService), BorderLayout.SOUTH);
 
         setContentPane(root);
+        updateTopBarAccountStatus();
         switchScreen("DASHBOARD");
     }
 
@@ -138,8 +149,84 @@ public class MailShieldMainWindow extends JFrame {
         leftPanel.add(lblSeparator);
         leftPanel.add(lblScreenBreadcrumb);
 
+        // Right: Universal Log Out Button
+        JPanel rightPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 12, 0));
+        rightPanel.setOpaque(false);
+
+        btnTopLogout = UiTheme.createStyledButton("⎋ Log Out / Switch Account", UiTheme.CARD_BG);
+        btnTopLogout.setBorder(BorderFactory.createLineBorder(UiTheme.COLOR_CRITICAL, 1));
+        btnTopLogout.setForeground(UiTheme.COLOR_CRITICAL);
+        btnTopLogout.setFont(UiTheme.FONT_SMALL);
+        btnTopLogout.setPreferredSize(new Dimension(190, 28));
+        btnTopLogout.setToolTipText("Log out and revoke tokens to switch accounts or providers");
+        btnTopLogout.addActionListener(e -> handleLogoutAndSwitchAccount());
+
+        rightPanel.add(btnTopLogout);
+
         topBar.add(leftPanel, BorderLayout.WEST);
+        topBar.add(rightPanel, BorderLayout.EAST);
         return topBar;
+    }
+
+    public void updateTopBarAccountStatus() {
+        if (providers == null || btnTopLogout == null) return;
+        boolean hasAny = false;
+        for (EmailProvider p : providers.values()) {
+            if (p.getStatus().isConnected()) {
+                hasAny = true;
+                break;
+            }
+        }
+        btnTopLogout.setVisible(hasAny);
+    }
+
+    private void handleLogoutAndSwitchAccount() {
+        if (providers == null) return;
+        java.util.List<EmailProvider> connected = new java.util.ArrayList<>();
+        StringBuilder accountList = new StringBuilder();
+        for (EmailProvider p : providers.values()) {
+            if (p.getStatus().isConnected()) {
+                connected.add(p);
+                accountList.append("• ").append(p.getProviderType().getTitle())
+                        .append(": ").append(p.getStatus().getAccountEmail()).append("\n");
+            }
+        }
+
+        if (connected.isEmpty()) {
+            JOptionPane.showMessageDialog(this,
+                    "No email accounts are currently connected.\n\nRedirecting to Connected Inboxes to sign in...",
+                    "No Active Account", JOptionPane.INFORMATION_MESSAGE);
+            switchScreen("INBOXES");
+            return;
+        }
+
+        int choice = JOptionPane.showConfirmDialog(this,
+                "Do you want to log out and switch your connected email account?\n\n" +
+                "Currently connected accounts:\n" + accountList + "\n" +
+                "Logging out will safely revoke local tokens and clear cached credentials from the vault.",
+                "Log Out & Switch Account",
+                JOptionPane.YES_NO_OPTION,
+                JOptionPane.QUESTION_MESSAGE);
+
+        if (choice != JOptionPane.YES_OPTION) {
+            return;
+        }
+
+        for (EmailProvider p : connected) {
+            p.disconnect();
+        }
+
+        updateTopBarAccountStatus();
+        if (inboxesPanel != null) inboxesPanel.refreshStatus();
+        if (dashboardPanel != null) dashboardPanel.refreshData();
+
+        switchScreen("INBOXES");
+
+        JOptionPane.showMessageDialog(this,
+                "✓ Successfully logged out!\n\n" +
+                "You can now select and connect a new Gmail or Microsoft Outlook account.",
+                "Logged Out",
+                JOptionPane.INFORMATION_MESSAGE);
     }
 
     private void triggerGlobalRefresh(JButton btn, MonitoringService monitoringService) {
@@ -168,6 +255,7 @@ public class MailShieldMainWindow extends JFrame {
                     if (casesPanel != null) casesPanel.refreshCases();
                     if (evidencePanel != null) evidencePanel.refreshEvidence();
                     if (inboxesPanel != null) inboxesPanel.refreshStatus();
+                    updateTopBarAccountStatus();
 
                     int totalCount = caseRepository != null ? caseRepository.getTotalEmailCount() : 0;
                     if (newCount > 0) {
@@ -200,7 +288,7 @@ public class MailShieldMainWindow extends JFrame {
                 } finally {
                     if (btn != null) {
                         btn.setEnabled(true);
-                        btn.setText("↻ Refresh All Emails");
+                        btn.setText("↻ Refresh Emails");
                     }
                 }
             }
@@ -212,169 +300,255 @@ public class MailShieldMainWindow extends JFrame {
         JPanel sidebar = new JPanel();
         sidebar.setLayout(new BoxLayout(sidebar, BoxLayout.Y_AXIS));
         sidebar.setBackground(UiTheme.SIDEBAR_BG);
-        sidebar.setPreferredSize(new Dimension(240, 0));
-        sidebar.setBorder(BorderFactory.createMatteBorder(0, 0, 0, 1, UiTheme.BORDER_COLOR));
+        sidebar.setPreferredSize(new Dimension(248, 0));
+        sidebar.setBorder(BorderFactory.createMatteBorder(0, 0, 0, 1, new Color(0x1C, 0x27, 0x38)));
 
-        // ── Logo / Brand block ──────────────────────────────────────────
-        JPanel brandBlock = new JPanel();
-        brandBlock.setLayout(new BoxLayout(brandBlock, BoxLayout.Y_AXIS));
-        brandBlock.setBackground(new Color(0x07, 0x0C, 0x14));   // slightly deeper than sidebar
-        brandBlock.setAlignmentX(Component.LEFT_ALIGNMENT);
-        brandBlock.setMaximumSize(new Dimension(240, 90));
-        brandBlock.setBorder(BorderFactory.createCompoundBorder(
-                BorderFactory.createMatteBorder(0, 0, 1, 0, new Color(0x38, 0xBD, 0xF8, 60)),
-                new EmptyBorder(18, 18, 14, 18)
+        // ════════════════════════════════════════════════════════════════
+        //  BRAND HEADER — premium shield logo block
+        // ════════════════════════════════════════════════════════════════
+        JPanel brand = new JPanel() {
+            @Override
+            protected void paintComponent(Graphics g) {
+                super.paintComponent(g);
+                Graphics2D g2 = (Graphics2D) g;
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                // Subtle gradient bottom glow
+                GradientPaint gp = new GradientPaint(0, getHeight() - 6, new Color(0x38, 0xBD, 0xF8, 25), 0, getHeight(), new Color(0x38, 0xBD, 0xF8, 0));
+                g2.setPaint(gp);
+                g2.fillRect(0, getHeight() - 6, getWidth(), 6);
+            }
+        };
+        brand.setLayout(new BoxLayout(brand, BoxLayout.Y_AXIS));
+        brand.setBackground(new Color(0x06, 0x0A, 0x12));
+        brand.setAlignmentX(Component.LEFT_ALIGNMENT);
+        brand.setMaximumSize(new Dimension(248, 88));
+        brand.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createMatteBorder(0, 0, 1, 0, new Color(0x1C, 0x27, 0x38)),
+                new EmptyBorder(16, 18, 10, 18)
         ));
 
-        // Shield emoji + name on one line
-        JPanel logoRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
+        // Logo row: shield icon + app name + tagline
+        JPanel logoRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 0));
         logoRow.setOpaque(false);
         logoRow.setAlignmentX(Component.LEFT_ALIGNMENT);
 
-        JLabel logoIcon = new JLabel("🛡");
-        logoIcon.setFont(new Font("Segoe UI Emoji", Font.PLAIN, 26));
+        // Circular shield emblem
+        JLabel shieldIcon = new JLabel("🛡") {
+            @Override
+            protected void paintComponent(Graphics g) {
+                Graphics2D g2 = (Graphics2D) g;
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                g2.setColor(new Color(0x0E, 0x1C, 0x36));
+                g2.fillOval(0, 0, 36, 36);
+                g2.setColor(new Color(0x38, 0xBD, 0xF8, 60));
+                g2.drawOval(0, 0, 35, 35);
+                super.paintComponent(g);
+            }
+        };
+        shieldIcon.setFont(new Font("Segoe UI Emoji", Font.PLAIN, 20));
+        shieldIcon.setHorizontalAlignment(SwingConstants.CENTER);
+        shieldIcon.setPreferredSize(new Dimension(36, 36));
 
-        JPanel logoText = new JPanel();
-        logoText.setLayout(new BoxLayout(logoText, BoxLayout.Y_AXIS));
-        logoText.setOpaque(false);
+        JPanel nameCol = new JPanel();
+        nameCol.setLayout(new BoxLayout(nameCol, BoxLayout.Y_AXIS));
+        nameCol.setOpaque(false);
 
-        JLabel brandName = new JLabel("MailShield");
-        brandName.setFont(new Font("Segoe UI", Font.BOLD, 17));
-        brandName.setForeground(UiTheme.TEXT_PRIMARY);
+        JLabel appName = new JLabel("MAILSHIELD");
+        appName.setFont(new Font("Segoe UI", Font.BOLD, 15));
+        appName.setForeground(UiTheme.TEXT_PRIMARY);
 
-        JLabel brandTagline = new JLabel("SOC Threat Detection");
-        brandTagline.setFont(new Font("Segoe UI", Font.PLAIN, 10));
-        brandTagline.setForeground(UiTheme.ACCENT_CYAN);
+        JLabel appTagline = new JLabel("Threat Detection Platform");
+        appTagline.setFont(new Font("Segoe UI", Font.PLAIN, 10));
+        appTagline.setForeground(new Color(0x64, 0x9C, 0xCA));
 
-        logoText.add(brandName);
-        logoText.add(brandTagline);
+        nameCol.add(appName);
+        nameCol.add(Box.createVerticalStrut(1));
+        nameCol.add(appTagline);
 
-        logoRow.add(logoIcon);
-        logoRow.add(logoText);
-        brandBlock.add(logoRow);
+        logoRow.add(shieldIcon);
+        logoRow.add(nameCol);
+        brand.add(logoRow);
 
-        // Version badge row
-        JPanel badgeRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+        // Version + status badges
+        JPanel badgeRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
         badgeRow.setOpaque(false);
         badgeRow.setAlignmentX(Component.LEFT_ALIGNMENT);
         badgeRow.setBorder(new EmptyBorder(6, 2, 0, 0));
 
-        JLabel badge = new JLabel("  v1.0  LIVE  ");
-        badge.setFont(new Font("Consolas", Font.BOLD, 10));
-        badge.setForeground(new Color(0x10, 0xB9, 0x81));
-        badge.setBackground(new Color(0x05, 0x25, 0x1A));
-        badge.setOpaque(true);
-        badge.setBorder(BorderFactory.createCompoundBorder(
-                BorderFactory.createLineBorder(new Color(0x10, 0xB9, 0x81, 100), 1),
-                new EmptyBorder(1, 4, 1, 4)
-        ));
-        badgeRow.add(badge);
-        brandBlock.add(badgeRow);
+        JLabel verBadge = new JLabel(" v1.0.0 ");
+        verBadge.setFont(new Font("Consolas", Font.PLAIN, 9));
+        verBadge.setForeground(new Color(0x94, 0xA3, 0xB8));
+        verBadge.setBackground(new Color(0x14, 0x1C, 0x2E));
+        verBadge.setOpaque(true);
+        verBadge.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(new Color(0x2A, 0x38, 0x4E), 1),
+                new EmptyBorder(1, 4, 1, 4)));
 
-        sidebar.add(brandBlock);
+        JLabel liveBadge = new JLabel(" ● LIVE ");
+        liveBadge.setFont(new Font("Consolas", Font.BOLD, 9));
+        liveBadge.setForeground(new Color(0x10, 0xB9, 0x81));
+        liveBadge.setBackground(new Color(0x05, 0x1E, 0x14));
+        liveBadge.setOpaque(true);
+        liveBadge.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(new Color(0x10, 0xB9, 0x81, 70), 1),
+                new EmptyBorder(1, 4, 1, 4)));
 
-        // ── Section label ───────────────────────────────────────────────
-        sidebar.add(createSectionLabel("NAVIGATION"));
+        badgeRow.add(verBadge);
+        badgeRow.add(liveBadge);
+        brand.add(badgeRow);
+        sidebar.add(brand);
 
-        // ── Nav items with icons ────────────────────────────────────────
-        addNavButton(sidebar, "DASHBOARD",    "⬛", "Overview Dashboard");
-        addNavButton(sidebar, "ANALYZE",      "📧", "Analyze Email");
-        addNavButton(sidebar, "INBOXES",      "📬", "Connected Inboxes");
-        addNavButton(sidebar, "QUEUE",        "📋", "Investigation Queue");
-        addNavButton(sidebar, "URL_INSPECT",  "🔗", "URL & Domain Forensics");
-        addNavButton(sidebar, "CASES",        "📁", "Investigation Cases");
+        // ════════════════════════════════════════════════════════════════
+        //  NAVIGATION — Core operational screens
+        // ════════════════════════════════════════════════════════════════
+        sidebar.add(createSectionDivider("NAVIGATION"));
 
-        sidebar.add(createSectionLabel("INTEL & ADMIN"));
+        addNavItem(sidebar, "DASHBOARD",   "◈", "Overview Dashboard");
+        addNavItem(sidebar, "ANALYZE",     "✉", "Analyze Email");
+        addNavItem(sidebar, "INBOXES",     "⇄", "Connected Inboxes");
+        addNavItem(sidebar, "QUEUE",       "☰", "Investigation Queue");
+        addNavItem(sidebar, "URL_INSPECT", "⛓", "URL & Domain Forensics");
+        addNavItem(sidebar, "CASES",       "▤", "Investigation Cases");
 
-        addNavButton(sidebar, "THREAT_INTEL", "⚠", "Threat Intelligence");
-        addNavButton(sidebar, "REPORTS",      "📊", "Evidence & Reports");
-        addNavButton(sidebar, "SETTINGS",     "⚙", "Settings & Security");
-        addNavButton(sidebar, "ABOUT",        "❓", "Help & Documentation");
+        // ════════════════════════════════════════════════════════════════
+        //  INTEL — Threat intelligence & evidence
+        // ════════════════════════════════════════════════════════════════
+        sidebar.add(createSectionDivider("INTEL"));
+
+        addNavItem(sidebar, "THREAT_INTEL", "◉", "Threat Intelligence");
+        addNavItem(sidebar, "REPORTS",      "▦", "Evidence & Reports");
+
+        // ════════════════════════════════════════════════════════════════
+        //  ADMIN — Platform management
+        // ════════════════════════════════════════════════════════════════
+        sidebar.add(createSectionDivider("ADMIN"));
+
+        addNavItem(sidebar, "SETTINGS", "⚙", "Settings & Security");
+        addNavItem(sidebar, "ABOUT",    "?", "Help & Documentation");
 
         sidebar.add(Box.createVerticalGlue());
 
-        // ── Bottom status pill ──────────────────────────────────────────
-        JPanel bottomPill = new JPanel(new BorderLayout());
-        bottomPill.setOpaque(false);
-        bottomPill.setBorder(new EmptyBorder(8, 14, 14, 14));
-        bottomPill.setAlignmentX(Component.LEFT_ALIGNMENT);
-        bottomPill.setMaximumSize(new Dimension(240, 50));
+        // ════════════════════════════════════════════════════════════════
+        //  FOOTER — Engine status indicator
+        // ════════════════════════════════════════════════════════════════
+        JPanel footer = new JPanel(new BorderLayout());
+        footer.setBackground(new Color(0x06, 0x0A, 0x12));
+        footer.setMaximumSize(new Dimension(248, 42));
+        footer.setAlignmentX(Component.LEFT_ALIGNMENT);
+        footer.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createMatteBorder(1, 0, 0, 0, new Color(0x1C, 0x27, 0x38)),
+                new EmptyBorder(8, 16, 8, 16)
+        ));
 
-        JLabel lblEngine = new JLabel("● Engine Active  |  JDK 21 LTS");
-        lblEngine.setFont(new Font("Segoe UI", Font.PLAIN, 10));
-        lblEngine.setForeground(new Color(0x64, 0x74, 0x8B));
-        bottomPill.add(lblEngine, BorderLayout.CENTER);
+        JLabel engineLbl = new JLabel("● Engine Active");
+        engineLbl.setFont(new Font("Segoe UI", Font.PLAIN, 10));
+        engineLbl.setForeground(new Color(0x10, 0xB9, 0x81));
 
-        sidebar.add(bottomPill);
+        JLabel jdkLbl = new JLabel("JDK 21 LTS");
+        jdkLbl.setFont(new Font("Segoe UI", Font.PLAIN, 10));
+        jdkLbl.setForeground(new Color(0x47, 0x55, 0x69));
+
+        footer.add(engineLbl, BorderLayout.WEST);
+        footer.add(jdkLbl, BorderLayout.EAST);
+        sidebar.add(footer);
 
         return sidebar;
     }
 
-    /** Small uppercase section divider label. */
-    private JPanel createSectionLabel(String text) {
-        JPanel wrapper = new JPanel(new BorderLayout());
+    /**
+     * Section divider: thin line + uppercase label — premium SOC style.
+     */
+    private JPanel createSectionDivider(String text) {
+        JPanel wrapper = new JPanel(new BorderLayout(8, 0));
         wrapper.setOpaque(false);
-        wrapper.setMaximumSize(new Dimension(240, 30));
+        wrapper.setMaximumSize(new Dimension(248, 32));
         wrapper.setAlignmentX(Component.LEFT_ALIGNMENT);
-        wrapper.setBorder(new EmptyBorder(10, 16, 2, 16));
+        wrapper.setBorder(new EmptyBorder(12, 18, 4, 18));
 
         JLabel lbl = new JLabel(text);
-        lbl.setFont(new Font("Segoe UI", Font.BOLD, 10));
-        lbl.setForeground(new Color(0x47, 0x55, 0x69));   // very muted grey
+        lbl.setFont(new Font("Segoe UI", Font.BOLD, 9));
+        lbl.setForeground(new Color(0x47, 0x55, 0x69));
+
+        // Horizontal hairline after text
+        JPanel line = new JPanel() {
+            @Override
+            protected void paintComponent(Graphics g) {
+                super.paintComponent(g);
+                g.setColor(new Color(0x1C, 0x27, 0x38));
+                g.drawLine(0, getHeight() / 2, getWidth(), getHeight() / 2);
+            }
+        };
+        line.setOpaque(false);
+
         wrapper.add(lbl, BorderLayout.WEST);
+        wrapper.add(line, BorderLayout.CENTER);
         return wrapper;
     }
 
-    private void addNavButton(JPanel sidebar, String screenKey, String icon, String label) {
+    /**
+     * Premium nav item with custom-painted active indicator, hover tint, and icon.
+     */
+    private void addNavItem(JPanel sidebar, String screenKey, String icon, String label) {
+        final Color HOVER_BG   = new Color(0x12, 0x1A, 0x2D);
+        final Color ACTIVE_BG  = new Color(0x14, 0x20, 0x36);
+        final Color INDICATOR  = new Color(0x38, 0xBD, 0xF8);  // cyan accent strip
+
         JButton btn = new JButton() {
             @Override
             protected void paintComponent(Graphics g) {
-                // Active state: left cyan accent bar + subtle highlight
-                boolean active = UiTheme.ACCENT_CYAN.equals(getForeground())
-                        && !UiTheme.TEXT_MUTED.equals(getForeground());
-                if (getBackground() != UiTheme.SIDEBAR_BG) {
-                    Graphics2D g2 = (Graphics2D) g;
-                    g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-                    // Highlight background
-                    g2.setColor(new Color(0x1E, 0x29, 0x3B, 180));
-                    g2.fillRoundRect(4, 2, getWidth() - 8, getHeight() - 4, 8, 8);
+                Graphics2D g2 = (Graphics2D) g;
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+
+                boolean isActive = getBackground().equals(ACTIVE_BG);
+
+                // Background fill for active / hovered state
+                if (isActive) {
+                    g2.setColor(ACTIVE_BG);
+                    g2.fillRoundRect(6, 1, getWidth() - 12, getHeight() - 2, 8, 8);
                     // Left cyan indicator strip
-                    g2.setColor(UiTheme.ACCENT_CYAN);
-                    g2.fillRoundRect(0, 6, 3, getHeight() - 12, 3, 3);
+                    g2.setColor(INDICATOR);
+                    g2.fillRoundRect(2, 6, 3, getHeight() - 12, 3, 3);
                 }
+
                 super.paintComponent(g);
             }
         };
 
-        // Build icon + label HTML
+        // Icon + label via HTML table for crisp alignment
         btn.setText("<html><table cellpadding='0' cellspacing='0'><tr>"
-                + "<td style='font-size:13px;padding-right:9px'>" + icon + "</td>"
-                + "<td style='font-size:12px'>" + label + "</td>"
+                + "<td width='22' align='center' style='font-size:13px; color:#64748b;'>" + icon + "</td>"
+                + "<td style='padding-left:8px; font-family:Segoe UI; font-size:11.5px;'>" + label + "</td>"
                 + "</tr></table></html>");
 
-        btn.setMaximumSize(new Dimension(236, 38));
-        btn.setPreferredSize(new Dimension(236, 38));
-        btn.setMinimumSize(new Dimension(100, 38));
+        btn.setMaximumSize(new Dimension(244, 36));
+        btn.setPreferredSize(new Dimension(244, 36));
+        btn.setMinimumSize(new Dimension(100, 36));
         btn.setFont(UiTheme.FONT_REGULAR);
         btn.setForeground(UiTheme.TEXT_MUTED);
         btn.setBackground(UiTheme.SIDEBAR_BG);
         btn.setHorizontalAlignment(SwingConstants.LEFT);
-        btn.setBorder(new EmptyBorder(5, 14, 5, 10));
+        btn.setBorder(new EmptyBorder(4, 10, 4, 10));
         btn.setFocusPainted(false);
-        btn.setContentAreaFilled(false);   // we do custom painting
+        btn.setContentAreaFilled(false);
         btn.setOpaque(false);
         btn.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
 
-        // Hover effect
+        // Hover effect — subtle background tint
         btn.addMouseListener(new java.awt.event.MouseAdapter() {
-            @Override public void mouseEntered(java.awt.event.MouseEvent e) {
-                if (btn.getBackground() == UiTheme.SIDEBAR_BG) {   // not active
+            @Override
+            public void mouseEntered(java.awt.event.MouseEvent e) {
+                if (!btn.getBackground().equals(ACTIVE_BG)) {
                     btn.setForeground(UiTheme.TEXT_PRIMARY);
+                    btn.setBackground(HOVER_BG);
+                    btn.repaint();
                 }
             }
-            @Override public void mouseExited(java.awt.event.MouseEvent e) {
-                if (btn.getBackground() == UiTheme.SIDEBAR_BG) {
+            @Override
+            public void mouseExited(java.awt.event.MouseEvent e) {
+                if (!btn.getBackground().equals(ACTIVE_BG)) {
                     btn.setForeground(UiTheme.TEXT_MUTED);
+                    btn.setBackground(UiTheme.SIDEBAR_BG);
+                    btn.repaint();
                 }
             }
         });
@@ -389,18 +563,20 @@ public class MailShieldMainWindow extends JFrame {
     private void switchScreen(String screenKey) {
         cardLayout.show(contentStage, screenKey);
 
+        final Color ACTIVE_BG = new Color(0x14, 0x20, 0x36);
+
         String screenTitle = switch (screenKey) {
-            case "DASHBOARD" -> "Overview Dashboard";
-            case "ANALYZE" -> "Deep Email Ingestion & Static Analysis";
-            case "INBOXES" -> "Connected Cloud Inboxes (OAuth2)";
-            case "QUEUE" -> "Email Investigation & Triage Queue";
-            case "URL_INSPECT" -> "URL & Domain Forensics";
-            case "CASES" -> "Incident Investigation Cases";
+            case "DASHBOARD"    -> "Overview Dashboard";
+            case "ANALYZE"      -> "Deep Email Ingestion & Static Analysis";
+            case "INBOXES"      -> "Connected Cloud Inboxes (OAuth2)";
+            case "QUEUE"        -> "Email Investigation & Triage Queue";
+            case "URL_INSPECT"  -> "URL & Domain Forensics";
+            case "CASES"        -> "Incident Investigation Cases";
             case "THREAT_INTEL" -> "Threat Intelligence & Curated Feeds";
-            case "REPORTS" -> "Forensics Evidence & Chain of Custody";
-            case "SETTINGS" -> "Platform Security & Settings";
-            case "ABOUT" -> "Academic Viva Guide & Threat Model";
-            default -> "Operations Console";
+            case "REPORTS"      -> "Forensics Evidence & Chain of Custody";
+            case "SETTINGS"     -> "Platform Security & Settings";
+            case "ABOUT"        -> "Help & System Documentation";
+            default             -> "Operations Console";
         };
         if (lblScreenBreadcrumb != null) {
             lblScreenBreadcrumb.setText(screenTitle);
@@ -409,9 +585,8 @@ public class MailShieldMainWindow extends JFrame {
         for (Map.Entry<String, JButton> entry : navButtons.entrySet()) {
             boolean active = entry.getKey().equals(screenKey);
             JButton b = entry.getValue();
-            b.setBackground(active ? UiTheme.CARD_BG : UiTheme.SIDEBAR_BG);
+            b.setBackground(active ? ACTIVE_BG : UiTheme.SIDEBAR_BG);
             b.setForeground(active ? UiTheme.ACCENT_CYAN : UiTheme.TEXT_MUTED);
-            b.setFont(active ? UiTheme.FONT_BOLD : UiTheme.FONT_REGULAR);
             b.repaint();
         }
 

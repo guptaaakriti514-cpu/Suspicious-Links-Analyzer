@@ -4,31 +4,43 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.*;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.util.Base64;
 import java.util.Optional;
 import java.util.Properties;
 
 /**
- * Local credential store for OAuth tokens and API secrets.
- * Obfuscates stored tokens to prevent casual plaintext exposure in logs or filesystem.
- * Never logs secrets or tokens.
+ * Enterprise credential store for OAuth tokens and API secrets.
+ * Backed by AES-256-GCM authenticated encryption at rest via TokenManagementService.
+ * Never logs secrets or tokens in plaintext.
  */
 public class DefaultCredentialStore implements CredentialStore {
 
     private static final Logger log = LoggerFactory.getLogger(DefaultCredentialStore.class);
+    private final TokenManagementService tokenManager;
     private final File storeFile;
     private final Properties props = new Properties();
-    private static final byte[] XOR_SALT = new byte[]{ 0x4D, 0x61, 0x69, 0x6C, 0x53, 0x68, 0x69, 0x65, 0x6C, 0x64, 0x32, 0x31 };
 
     public DefaultCredentialStore(String dataDirPath) {
+        this.tokenManager = new TokenManagementService(dataDirPath);
         File dir = new File(dataDirPath, "credentials");
         if (!dir.exists()) {
             dir.mkdirs();
         }
         this.storeFile = new File(dir, "vault.properties");
         load();
+    }
+
+    public DefaultCredentialStore(TokenManagementService tokenManager, String dataDirPath) {
+        this.tokenManager = tokenManager;
+        File dir = new File(dataDirPath, "credentials");
+        if (!dir.exists()) {
+            dir.mkdirs();
+        }
+        this.storeFile = new File(dir, "vault.properties");
+        load();
+    }
+
+    public TokenManagementService getTokenManager() {
+        return tokenManager;
     }
 
     private synchronized void load() {
@@ -52,52 +64,42 @@ public class DefaultCredentialStore implements CredentialStore {
     @Override
     public synchronized void saveSecret(String key, String secret) {
         if (key == null || secret == null) return;
-        String obfuscated = obfuscate(secret);
-        props.setProperty(key, obfuscated);
+        tokenManager.saveEncryptedString(key, secret);
+        props.setProperty(key, "AES256GCM:vault");
         persist();
     }
 
     @Override
     public synchronized Optional<String> getSecret(String key) {
         if (key == null) return Optional.empty();
+        Optional<String> decrypted = tokenManager.loadDecryptedString(key);
+        if (decrypted.isPresent()) {
+            return decrypted;
+        }
+        // Fallback for legacy keys if any
         String val = props.getProperty(key);
-        if (val == null || val.isBlank()) return Optional.empty();
-        return Optional.ofNullable(deobfuscate(val));
+        if (val != null && !val.isBlank() && !val.startsWith("AES256GCM:")) {
+            return Optional.of(val);
+        }
+        return Optional.empty();
     }
 
     @Override
     public synchronized void removeSecret(String key) {
-        if (key != null && props.containsKey(key)) {
-            props.remove(key);
-            persist();
+        if (key != null) {
+            tokenManager.deleteToken(key);
+            if (props.containsKey(key)) {
+                props.remove(key);
+                persist();
+            }
         }
     }
 
     @Override
     public synchronized boolean hasSecret(String key) {
-        return key != null && props.containsKey(key);
-    }
-
-    private String obfuscate(String input) {
-        byte[] bytes = input.getBytes(StandardCharsets.UTF_8);
-        byte[] result = new byte[bytes.length];
-        for (int i = 0; i < bytes.length; i++) {
-            result[i] = (byte) (bytes[i] ^ XOR_SALT[i % XOR_SALT.length]);
-        }
-        return Base64.getEncoder().encodeToString(result);
-    }
-
-    private String deobfuscate(String base64) {
-        try {
-            byte[] bytes = Base64.getDecoder().decode(base64);
-            byte[] result = new byte[bytes.length];
-            for (int i = 0; i < bytes.length; i++) {
-                result[i] = (byte) (bytes[i] ^ XOR_SALT[i % XOR_SALT.length]);
-            }
-            return new String(result, StandardCharsets.UTF_8);
-        } catch (Exception e) {
-            return null;
-        }
+        if (key == null) return false;
+        return tokenManager.hasToken(key) || props.containsKey(key);
     }
 }
+
 
