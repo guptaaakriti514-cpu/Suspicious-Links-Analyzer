@@ -94,28 +94,44 @@ public class SafeHeaderAnalyzer implements HeaderAnalyzer {
             }
         }
 
-        // 3. Return-Path Mismatch (Heuristic, not definitive fraud)
+        // 3. Return-Path Mismatch / Alignment
         if (!returnPath.isBlank() && !fromAddress.isBlank()) {
             String fromDomain = SecurityUtils.extractRegistrableDomain(senderDomain);
             String returnDomain = SecurityUtils.extractRegistrableDomain(extractDomain(returnPath));
-            if (!fromDomain.isBlank() && !returnDomain.isBlank() && !fromDomain.equalsIgnoreCase(returnDomain)) {
-                findings.add(Finding.builder()
-                        .ruleId("HDR-004")
-                        .ruleVersion("1.0.0")
-                        .category(FindingCategory.HEADER_ANOMALY)
-                        .severity(Severity.LOW)
-                        .confidence(0.55)
-                        .shortDescription("Return-Path and From Domain Divergence")
-                        .explanation("The Return-Path (bounce destination) domain differs from the From address. Often legitimate for mailing lists, but common in spam relays.")
-                        .evidenceSnippet(String.format("Return-Path: <%s> vs From: <%s>", returnPath, fromAddress))
-                        .sourceLocation("Header: Return-Path")
-                        .findingType(FindingType.HEURISTIC)
-                        .safeNextStep("Treat as a contextual indicator alongside SPF/DKIM verification.")
-                        .build());
+            if (!fromDomain.isBlank() && !returnDomain.isBlank()) {
+                if (!fromDomain.equalsIgnoreCase(returnDomain)) {
+                    findings.add(Finding.builder()
+                            .ruleId("HDR-004")
+                            .ruleVersion("1.0.0")
+                            .category(FindingCategory.HEADER_ANOMALY)
+                            .severity(Severity.LOW)
+                            .confidence(0.55)
+                            .shortDescription("Return-Path and From Domain Divergence")
+                            .explanation("The Return-Path (bounce destination) domain differs from the From address. Often legitimate for mailing lists, but common in spam relays.")
+                            .evidenceSnippet(String.format("Return-Path: <%s> vs From: <%s>", returnPath, fromAddress))
+                            .sourceLocation("Header: Return-Path")
+                            .findingType(FindingType.HEURISTIC)
+                            .safeNextStep("Treat as a contextual indicator alongside SPF/DKIM verification.")
+                            .build());
+                } else {
+                    findings.add(Finding.builder()
+                            .ruleId("HDR-011")
+                            .ruleVersion("1.0.0")
+                            .category(FindingCategory.HEADER_ANOMALY)
+                            .severity(Severity.INFO)
+                            .confidence(0.90)
+                            .shortDescription("Envelope Return-Path and From Domain Aligned")
+                            .explanation("Bounce destination domain directly matches envelope From domain (" + fromDomain + ").")
+                            .evidenceSnippet(String.format("Return-Path: <%s> == From: <%s>", returnPath, fromAddress))
+                            .sourceLocation("Header: Return-Path")
+                            .findingType(FindingType.METADATA_OBSERVATION)
+                            .safeNextStep("Legitimate envelope routing alignment confirmed.")
+                            .build());
+                }
             }
         }
 
-        // 4. Missing Message-ID
+        // 4. Message-ID Presence / Audit Check
         if (message.getMessageIdHeader().isBlank()) {
             findings.add(Finding.builder()
                     .ruleId("HDR-005")
@@ -129,6 +145,20 @@ public class SafeHeaderAnalyzer implements HeaderAnalyzer {
                     .sourceLocation("RFC 5322 Envelope Headers")
                     .findingType(FindingType.METADATA_OBSERVATION)
                     .safeNextStep("Inspect MTA relay logs to confirm origin.")
+                    .build());
+        } else {
+            findings.add(Finding.builder()
+                    .ruleId("HDR-010")
+                    .ruleVersion("1.0.0")
+                    .category(FindingCategory.HEADER_ANOMALY)
+                    .severity(Severity.INFO)
+                    .confidence(0.90)
+                    .shortDescription("Valid RFC 5322 Unique Identifier Verified")
+                    .explanation("Message contains a valid unique tracking identifier for forensic audit and provenance verification.")
+                    .evidenceSnippet("Message-ID: " + message.getMessageIdHeader())
+                    .sourceLocation("Header: Message-ID")
+                    .findingType(FindingType.METADATA_OBSERVATION)
+                    .safeNextStep("Unique Message-ID indexed for forensic tracking.")
                     .build());
         }
 
@@ -178,6 +208,20 @@ public class SafeHeaderAnalyzer implements HeaderAnalyzer {
                         .findingType(FindingType.PARSED_AUTHENTICATION_EVIDENCE)
                         .safeNextStep("Examine transmitting MTA address.")
                         .build());
+            } else if (auth.getSpfStatus() == AuthenticationResult.AuthStatus.PASS) {
+                findings.add(Finding.builder()
+                        .ruleId("AUTH-010")
+                        .ruleVersion("1.0.0")
+                        .category(FindingCategory.AUTHENTICATION_FAILURE)
+                        .severity(Severity.INFO)
+                        .confidence(0.95)
+                        .shortDescription("SPF Verification Passed (spf=pass)")
+                        .explanation("The sending server IP address is verified and authorized by DNS SPF records.")
+                        .evidenceSnippet("SPF Verdict: PASS" + (auth.getSpfSender().isBlank() ? "" : " | Sender: " + auth.getSpfSender()))
+                        .sourceLocation("Authentication-Results: spf=pass")
+                        .findingType(FindingType.PARSED_AUTHENTICATION_EVIDENCE)
+                        .safeNextStep("Sender IP authorization confirmed.")
+                        .build());
             }
 
             // DKIM
@@ -195,6 +239,20 @@ public class SafeHeaderAnalyzer implements HeaderAnalyzer {
                         .findingType(FindingType.PARSED_AUTHENTICATION_EVIDENCE)
                         .safeNextStep("Do not trust the content integrity of this email.")
                         .build());
+            } else if (auth.getDkimStatus() == AuthenticationResult.AuthStatus.PASS) {
+                findings.add(Finding.builder()
+                        .ruleId("AUTH-011")
+                        .ruleVersion("1.0.0")
+                        .category(FindingCategory.AUTHENTICATION_FAILURE)
+                        .severity(Severity.INFO)
+                        .confidence(0.95)
+                        .shortDescription("DKIM Cryptographic Signature Valid (dkim=pass)")
+                        .explanation("Cryptographic digital signature verified against sender's published DNS public key.")
+                        .evidenceSnippet("DKIM Verdict: PASS" + (auth.getDkimDomain().isBlank() ? "" : " | Domain: " + auth.getDkimDomain()))
+                        .sourceLocation("Authentication-Results: dkim=pass")
+                        .findingType(FindingType.PARSED_AUTHENTICATION_EVIDENCE)
+                        .safeNextStep("Header and payload integrity verified.")
+                        .build());
             }
 
             // DMARC
@@ -211,6 +269,20 @@ public class SafeHeaderAnalyzer implements HeaderAnalyzer {
                         .sourceLocation("Authentication-Results: dmarc=fail")
                         .findingType(FindingType.PARSED_AUTHENTICATION_EVIDENCE)
                         .safeNextStep("Treat with heightened scrutiny as sender domain reject/quarantine policy was violated.")
+                        .build());
+            } else if (auth.getDmarcStatus() == AuthenticationResult.AuthStatus.PASS) {
+                findings.add(Finding.builder()
+                        .ruleId("AUTH-012")
+                        .ruleVersion("1.0.0")
+                        .category(FindingCategory.AUTHENTICATION_FAILURE)
+                        .severity(Severity.INFO)
+                        .confidence(0.95)
+                        .shortDescription("DMARC Alignment Confirmed (dmarc=pass)")
+                        .explanation("Message satisfies domain alignment and authentication enforcement policy.")
+                        .evidenceSnippet("DMARC Verdict: PASS")
+                        .sourceLocation("Authentication-Results: dmarc=pass")
+                        .findingType(FindingType.PARSED_AUTHENTICATION_EVIDENCE)
+                        .safeNextStep("Domain identity confirmed compliant with organizational DMARC policy.")
                         .build());
             }
         }

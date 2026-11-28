@@ -118,6 +118,26 @@ public final class EmailMessage {
         return messageIdHeader;
     }
 
+    /**
+     * Returns the primary unique identifier for this email.
+     * Prefers RFC 5322 Message-ID, then provider ID, then internal UUID or SHA-256 fingerprint.
+     */
+    public String getDisplayUniqueId() {
+        if (messageIdHeader != null && !messageIdHeader.isBlank()) {
+            return messageIdHeader.trim();
+        }
+        if (providerMessageId != null && !providerMessageId.isBlank()) {
+            return providerMessageId.trim();
+        }
+        if (id != null && !id.isBlank()) {
+            return id.trim();
+        }
+        if (rawSha256 != null && !rawSha256.isBlank()) {
+            return "SHA256:" + rawSha256.substring(0, Math.min(16, rawSha256.length()));
+        }
+        return "N/A";
+    }
+
     public List<EmailHeader> getHeaders() {
         return headers;
     }

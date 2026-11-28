@@ -92,11 +92,28 @@ public class SafeEmailParser implements EmailParser {
                 Header h = allHeaders.nextElement();
                 EmailHeader eh = new EmailHeader(h.getName(), h.getValue());
                 headerList.add(eh);
-                if (h.getName().equalsIgnoreCase("Message-ID")) {
-                    messageIdHeader = h.getValue();
-                } else if (h.getName().equalsIgnoreCase("Return-Path")) {
+                String hn = h.getName().toLowerCase(Locale.ROOT).trim();
+                if (hn.equals("message-id") || hn.equals("message id") || hn.equals("message_id")
+                        || hn.equals("x-message-id") || hn.equals("x-messageid") || hn.equals("messageid")) {
+                    if (messageIdHeader.isBlank()) {
+                        messageIdHeader = h.getValue().trim();
+                    }
+                } else if (hn.equals("return-path")) {
                     returnPath = cleanAddress(h.getValue());
                 }
+            }
+            if (messageIdHeader.isBlank()) {
+                for (EmailHeader eh : headerList) {
+                    String hn = eh.getName().toLowerCase(Locale.ROOT).trim();
+                    if (hn.contains("message-id") || hn.contains("message id") || hn.equals("feedback-id")) {
+                        messageIdHeader = eh.getValue().trim();
+                        break;
+                    }
+                }
+            }
+            if (messageIdHeader.isBlank()) {
+                String sha = SecurityUtils.sha256Hex(rawBytes);
+                messageIdHeader = "<ms-" + sha.substring(0, 16) + "@mailshield.forensics>";
             }
             builder.headers(headerList);
             builder.messageIdHeader(messageIdHeader);
@@ -148,7 +165,15 @@ public class SafeEmailParser implements EmailParser {
 
             // Extract URLs if UrlAnalyzer is present
             if (urlAnalyzer != null) {
-                List<ExtractedUrl> urls = urlAnalyzer.extractUrls(parsedContent.bodyText.toString(), parsedContent.bodyHtml.toString());
+                StringBuilder inspectableText = new StringBuilder();
+                inspectableText.append(parsedContent.bodyText).append("\n");
+                for (EmailHeader h : headerList) {
+                    String val = h.getValue();
+                    if (val != null && (val.contains("http://") || val.contains("https://"))) {
+                        inspectableText.append(val).append("\n");
+                    }
+                }
+                List<ExtractedUrl> urls = urlAnalyzer.extractUrls(inspectableText.toString(), parsedContent.bodyHtml.toString());
                 builder.extractedUrls(urls);
             }
 
@@ -242,11 +267,18 @@ public class SafeEmailParser implements EmailParser {
         List<EmailHeader> headers = new ArrayList<>();
         StringBuilder body = new StringBuilder();
         boolean inHeader = true;
+        String messageIdHeader = "";
 
         for (String line : lines) {
             if (inHeader) {
                 if (line.isBlank()) {
                     inHeader = false;
+                    continue;
+                }
+                // Handle folded header continuation lines
+                if ((line.startsWith(" ") || line.startsWith("\t")) && !headers.isEmpty()) {
+                    EmailHeader last = headers.remove(headers.size() - 1);
+                    headers.add(new EmailHeader(last.getName(), last.getValue() + " " + line.trim()));
                     continue;
                 }
                 int colonIdx = line.indexOf(':');
@@ -255,17 +287,27 @@ public class SafeEmailParser implements EmailParser {
                     String value = line.substring(colonIdx + 1).trim();
                     headers.add(new EmailHeader(name, value, line));
 
-                    if (name.equalsIgnoreCase("From")) {
+                    String hn = name.toLowerCase(Locale.ROOT).trim();
+                    if (hn.equals("from")) {
                         builder.from(value);
                         builder.fromAddress(cleanAddress(value));
-                    } else if (name.equalsIgnoreCase("Subject")) {
+                    } else if (hn.equals("to")) {
+                        builder.to(parseAddressStringList(value));
+                    } else if (hn.equals("cc")) {
+                        builder.cc(parseAddressStringList(value));
+                    } else if (hn.equals("bcc")) {
+                        builder.bcc(parseAddressStringList(value));
+                    } else if (hn.equals("subject")) {
                         builder.subject(value);
-                    } else if (name.equalsIgnoreCase("Reply-To")) {
+                    } else if (hn.equals("reply-to")) {
                         builder.replyTo(cleanAddress(value));
-                    } else if (name.equalsIgnoreCase("Return-Path")) {
+                    } else if (hn.equals("return-path")) {
                         builder.returnPath(cleanAddress(value));
-                    } else if (name.equalsIgnoreCase("Message-ID")) {
-                        builder.messageIdHeader(value);
+                    } else if (hn.equals("message-id") || hn.equals("message id") || hn.equals("message_id")
+                            || hn.equals("x-message-id") || hn.equals("x-messageid") || hn.equals("messageid")) {
+                        if (messageIdHeader.isBlank()) {
+                            messageIdHeader = value.trim();
+                        }
                     }
                 }
             } else {
@@ -273,16 +315,52 @@ public class SafeEmailParser implements EmailParser {
             }
         }
 
+        if (messageIdHeader.isBlank()) {
+            for (EmailHeader eh : headers) {
+                String hn = eh.getName().toLowerCase(Locale.ROOT).trim();
+                if (hn.contains("message-id") || hn.contains("message id") || hn.equals("feedback-id")) {
+                    messageIdHeader = eh.getValue().trim();
+                    break;
+                }
+            }
+        }
+        if (messageIdHeader.isBlank()) {
+            String sha = SecurityUtils.sha256Hex(rawBytes);
+            messageIdHeader = "<ms-" + sha.substring(0, 16) + "@mailshield.forensics>";
+        }
+
         builder.headers(headers);
+        builder.messageIdHeader(messageIdHeader);
         builder.bodyText(body.toString().trim());
         builder.authResult(parseAuthenticationResults(headers));
 
         if (urlAnalyzer != null) {
-            List<ExtractedUrl> urls = urlAnalyzer.extractUrls(body.toString(), "");
+            StringBuilder inspectableText = new StringBuilder();
+            inspectableText.append(body).append("\n");
+            for (EmailHeader h : headers) {
+                String val = h.getValue();
+                if (val != null && (val.contains("http://") || val.contains("https://"))) {
+                    inspectableText.append(val).append("\n");
+                }
+            }
+            List<ExtractedUrl> urls = urlAnalyzer.extractUrls(inspectableText.toString(), "");
             builder.extractedUrls(urls);
         }
 
         return builder.build();
+    }
+
+    private static List<String> parseAddressStringList(String raw) {
+        if (raw == null || raw.isBlank()) return Collections.emptyList();
+        List<String> list = new ArrayList<>();
+        String[] parts = raw.split("[,;]");
+        for (String part : parts) {
+            String cleaned = cleanAddress(part);
+            if (!cleaned.isBlank()) {
+                list.add(cleaned);
+            }
+        }
+        return list;
     }
 
     public static AuthenticationResult parseAuthenticationResults(List<EmailHeader> headers) {
